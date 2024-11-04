@@ -28,6 +28,8 @@ class WaveletTree:
             self.left_tree[text] = WaveletTree(left_text)
         if right_text:
             self.right_tree[text] = WaveletTree(right_text)
+    
+
 
     def rank(self, character, index):
         if character not in self.tree:
