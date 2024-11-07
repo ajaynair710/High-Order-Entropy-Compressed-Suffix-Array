@@ -1,14 +1,19 @@
-import time
-import tracemalloc
+from collections import Counter
 
-def measure_ram_usage():
-    return tracemalloc.get_traced_memory()[1]
+def build_count(text):
+    alphabet = sorted(set(text))
+    c = Counter(text)
+    total = 0
+    count = {}
+    for char in alphabet:
+        count[char] = total
+        total += c[char]
+    return count
 
-def time_function(func):
-    def wrapper(*args, **kwargs):
-        start = time.time()
-        result = func(*args, **kwargs)
-        end = time.time()
-        print(f"Function {func.__name__} took {end - start:.4f} seconds")
-        return result
-    return wrapper
+def build_occ(bwt):
+    alphabet = set(bwt)
+    occ = {char: [0] for char in alphabet}
+    for i, char in enumerate(bwt):
+        for key in occ.keys():
+            occ[key].append(occ[key][-1] + (char == key))
+    return occ
