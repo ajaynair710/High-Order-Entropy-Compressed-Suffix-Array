@@ -140,3 +140,61 @@ def ksa(T):
 def build_suffix_array(text):
     T = [ord(c) for c in text]
     return ksa(T)
+
+# def test_suffix_array():
+#     # Test case 1: Simple string "banana$"
+#     text1 = "banana$"
+#     sa1 = build_suffix_array(text1)
+#     expected_sa1 = [6, 5, 3, 1, 0, 4, 2]  # Correct suffix array for "banana$"
+    
+#     # Test case 2: String with repeating characters "aaa$"
+#     text2 = "aaa$"
+#     sa2 = build_suffix_array(text2)
+#     expected_sa2 = [3, 2, 1, 0]  # Correct suffix array for "aaa$"
+    
+#     # Test case 3: String with all different characters "abcd$"
+#     text3 = "abcd$"
+#     sa3 = build_suffix_array(text3)
+#     expected_sa3 = [4, 0, 1, 2, 3]  # Correct suffix array for "abcd$"
+    
+#     # Verify results
+#     def verify_suffix_array(text, sa):
+#         # Check if length is correct
+#         if len(sa) != len(text):
+#             return False
+            
+#         # Check if all positions are present
+#         if sorted(sa) != list(range(len(text))):
+#             return False
+            
+#         # Check if suffixes are in lexicographical order
+#         suffixes = [(text[pos:], pos) for pos in sa]
+#         return suffixes == sorted(suffixes)
+    
+#     # Print results
+#     print("Test case 1 (banana$):")
+#     print(f"Expected: {expected_sa1}")
+#     print(f"Got:      {sa1}")
+#     print(f"Correct?: {sa1 == expected_sa1}")
+#     print(f"Valid?:   {verify_suffix_array(text1, sa1)}\n")
+    
+#     print("Test case 2 (aaa$):")
+#     print(f"Expected: {expected_sa2}")
+#     print(f"Got:      {sa2}")
+#     print(f"Correct?: {sa2 == expected_sa2}")
+#     print(f"Valid?:   {verify_suffix_array(text2, sa2)}\n")
+    
+#     print("Test case 3 (abcd$):")
+#     print(f"Expected: {expected_sa3}")
+#     print(f"Got:      {sa3}")
+#     print(f"Correct?: {sa3 == expected_sa3}")
+#     print(f"Valid?:   {verify_suffix_array(text3, sa3)}\n")
+    
+#     # Print all suffixes in order for debugging
+#     print("Detailed suffix list for banana$:")
+#     sa = sa1
+#     for i, pos in enumerate(sa):
+#         print(f"SA[{i}] = {pos}: {text1[pos:]}")
+
+# if __name__ == "__main__":
+#     test_suffix_array()
