@@ -1,97 +1,146 @@
-class WaveletTree:
-    def __init__(self, text):
-        self.text = text
-        self.tree = {}
-        self.left_tree = {}
-        self.right_tree = {}
-        self.build_tree(text, sorted(set(text)))
+# wavelet_tree.py
+import math
 
-    def build_tree(self, text, alphabet):
-        # Base case: If alphabet has only one character, it's a leaf node
+class WaveletTree:
+    def __init__(self, bwt):
+        self.bwt = bwt
+        self.alphabet = sorted(set(bwt))
+        self.tree = self.build_tree(bwt, self.alphabet)
+        # Add RRR-compressed bitvectors
+        self.rrr_vectors = self._build_rrr_vectors(self.tree)
+
+    def build_tree(self, bwt, alphabet):
         if len(alphabet) == 1:
-            self.tree[text] = [1] * len(text)  # Leaf node with all 1's
-            return
+            return [1] * len(bwt)
         
-        # Divide alphabet into left and right halves
         mid = len(alphabet) // 2
         left, right = set(alphabet[:mid]), set(alphabet[mid:])
+        bitvector = [1 if char in right else 0 for char in bwt]
 
-        # Build current level of the tree as a bitvector for left and right partitions
-        self.tree[text] = [1 if char in right else 0 for char in text]
-        
-        # Partition the text for left and right nodes
-        left_text = ''.join([char for char in text if char in left])
-        right_text = ''.join([char for char in text if char in right])
-        
-        # Recursively build the left and right subtrees
-        if left_text:
-            self.left_tree[text] = WaveletTree(left_text)
-        if right_text:
-            self.right_tree[text] = WaveletTree(right_text)
-    
+        left_bwt = ''.join(char for char, bit in zip(bwt, bitvector) if bit == 0)
+        right_bwt = ''.join(char for char, bit in zip(bwt, bitvector) if bit == 1)
 
+        return {
+            'bitvector': bitvector,
+            'left': self.build_tree(left_bwt, alphabet[:mid]) if left_bwt else None,
+            'right': self.build_tree(right_bwt, alphabet[mid:]) if right_bwt else None
+        }
 
-    def rank(self, character, index):
-        if character not in self.tree:
+    def rank(self, char, index):
+        if char not in self.tree:
             return 0
-        current_text = self.text
-        rank_count = 0
-        
-        while True:
-            if index < 0 or index >= len(current_text):
-                return 0
-            
-            bitvector = self.tree[current_text]
-            char_bit = 1 if character in self.right_tree else 0
-
-            # Count occurrences of bits up to `index`
-            rank_in_bitvector = sum(bit for bit in bitvector[:index + 1] if bit == char_bit)
-
-            # Update index based on whether we go left or right in the tree
-            if char_bit == 0:
-                current_text = ''.join([c for i, c in enumerate(current_text) if bitvector[i] == 0])
-            else:
-                current_text = ''.join([c for i, c in enumerate(current_text) if bitvector[i] == 1])
-
-            index = rank_in_bitvector - 1
-            
-            # If we've reached a leaf node
-            if len(current_text) == 1:
-                return rank_count + (1 if current_text[0] == character else 0)
-
-            # Update rank_count for the next level
-            rank_count += rank_in_bitvector
-
-    def select(self, character, k):
-        """
-        Find the position of the k-th occurrence of `character`.
-        """
-        if k < 1 or character not in self.tree:
-            return -1
-
-        current_text = self.text
-        path = []
-        
-        # Traverse the wavelet tree to find the k-th occurrence
-        while True:
-            if len(current_text) == 1:
+        current_text = self.bwt
+        rank = 0
+        while len(current_text) > 0:
+            bitvector = self.tree.get(current_text, {}).get('bitvector', [])
+            if not bitvector:
                 break
 
-            # Determine whether to go left or right based on `character`
-            if character in self.left_tree:
-                path.append(0)  # Go left
-                current_text = ''.join([c for i, c in enumerate(current_text) if self.tree[current_text][i] == 0])
+            char_bit = 1 if char in ''.join(self.tree.get(current_text, {}).get('right', '')) else 0
+            rank = sum(bit == char_bit for bit in bitvector[:index + 1])
+            if char_bit == 0:
+                current_text = ''.join(c for i, c in enumerate(current_text) if bitvector[i] == 0)
             else:
-                path.append(1)  # Go right
-                current_text = ''.join([c for i, c in enumerate(current_text) if self.tree[current_text][i] == 1])
+                current_text = ''.join(c for i, c in enumerate(current_text) if bitvector[i] == 1)
+            index = rank - 1
+            if len(current_text) == 1:
+                return index + 1 if current_text[0] == char else 0
+        return rank
 
-        # Traverse back up the tree using the path to determine the k-th occurrence
-        pos = 0  # Start position
-        for direction in reversed(path):
-            bitvector = self.tree[current_text]
-            if direction == 0:
-                pos = sum(1 for bit in bitvector[:pos + k] if bit == 0)  # Count zeros
-            else:
-                pos = sum(1 for bit in bitvector[:pos + k] if bit == 1)  # Count ones
+    def _build_rrr_vectors(self, node):
+        if isinstance(node, list):
+            return RRRBitvector(node)
+        
+        return {
+            'bitvector': RRRBitvector(node['bitvector']),
+            'left': self._build_rrr_vectors(node['left']) if node['left'] else None,
+            'right': self._build_rrr_vectors(node['right']) if node['right'] else None
+        }
 
-        return pos if pos < len(self.text) else -1
+    def size_in_bits(self):
+        """Calculate size in bits using high-order entropy bound"""
+        n = len(self.bwt)
+        sigma = len(self.alphabet)
+        
+        # Space for wavelet tree structure
+        struct_size = 2 * sigma * math.ceil(math.log2(n))  # Pointers
+        
+        # Space for RRR-compressed bitvectors
+        bitvector_size = self._calculate_bitvector_size(self.tree)
+        
+        return struct_size + bitvector_size
+
+    def _calculate_bitvector_size(self, node):
+        if isinstance(node, list):
+            return len(node)
+        
+        size = len(node['bitvector'])
+        if node['left']:
+            size += self._calculate_bitvector_size(node['left'])
+        if node['right']:
+            size += self._calculate_bitvector_size(node['right'])
+        return size
+
+class RRRBitvector:
+    def __init__(self, bitvector):
+        self.block_size = max(1, int(math.log2(len(bitvector)) / 2))
+        self.superblock_size = self.block_size * self.block_size
+        
+        # Store block counts and class IDs
+        self.blocks = []
+        self.block_classes = []
+        self.superblock_samples = []
+        
+        count = 0
+        for i in range(0, len(bitvector), self.block_size):
+            block = bitvector[i:i+self.block_size]
+            if i % self.superblock_size == 0:
+                self.superblock_samples.append(count)
+            
+            block_count = sum(block)
+            self.blocks.append(self._encode_block(block))
+            self.block_classes.append(block_count)
+            count += block_count
+
+    def _encode_block(self, block):
+        """Encode block using combinatorial number system"""
+        if not block:
+            return 0
+        n = len(block)
+        ones = sum(block)
+        if ones == 0 or ones == n:
+            return 0
+        
+        # Calculate combinatorial number
+        rank = 0
+        remaining = ones
+        for i, bit in enumerate(block):
+            if bit and remaining > 0:
+                rank += self._binom(n - i - 1, remaining - 1)
+                remaining -= 1
+        return rank
+
+    def _binom(self, n, k):
+        """Calculate binomial coefficient"""
+        if k < 0 or k > n:
+            return 0
+        if k == 0 or k == n:
+            return 1
+        k = min(k, n - k)
+        c = 1
+        for i in range(k):
+            c = c * (n - i) // (i + 1)
+        return c
+
+    def size_in_bits(self):
+        """Calculate size in bits"""
+        n = len(self.blocks) * self.block_size
+        # Space for superblock samples
+        superblock_bits = len(self.superblock_samples) * math.ceil(math.log2(n))
+        # Space for block classes
+        block_class_bits = len(self.block_classes) * math.ceil(math.log2(self.block_size))
+        # Space for encoded blocks
+        block_bits = sum(math.ceil(math.log2(self._binom(self.block_size, c) + 1)) 
+                        for c in self.block_classes)
+        
+        return superblock_bits + block_class_bits + block_bits
