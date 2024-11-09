@@ -9,9 +9,11 @@ from csa.enhanced_fm_index import EnhancedFMIndex
 from csa.wavelet_tree import WaveletTree
 from collections import Counter
 from collections import defaultdict
+from bitarray import bitarray
+import numpy as np
 
 class CompressedSuffixArray:
-    def __init__(self, text, epsilon=0.5, k=2):
+    def __init__(self, text, epsilon=0.5, k=5):
         """
         Initialize High-Entropy Compressed Suffix Array
         Args:
@@ -68,7 +70,18 @@ class CompressedSuffixArray:
         self.build_rank_dictionary()
         
         # Add debug prints
-
+        
+        # Optimize parameters for better compression
+        self.block_size = max(1, int(math.log2(self.n)))
+        self.run_length_threshold = 4  # For run-length encoding
+        self.context_order = min(k, int(0.5 * math.log(self.n, self.sigma)))
+        
+        # Enhanced compression structures
+        if self.use_compression:
+            self.run_lengths = self._compute_run_lengths()
+            self.context_stats = self._build_context_statistics()
+            self.compressed_bwt = self._compress_bwt()
+        
     def _sample_psi(self):
         """Sample Ψ values at rate epsilon"""
         sample_interval = max(1, int(1/self.epsilon))
@@ -102,100 +115,82 @@ class CompressedSuffixArray:
         return pos
 
     def calculate_high_order_entropy(self, text, k):
-        """Calculate k-th order empirical entropy with tighter bounds"""
+        """Calculate k-th order empirical entropy with improved context modeling"""
         if not text or k < 0:
             return 0
             
         n = len(text)
         sigma = len(set(text))
         
-        # Following paper's bound: k ≤ α logσ n where α < 1
-        alpha = 0.5
-        max_k = int(alpha * math.log(n, sigma))
-        k = min(k, max_k)
+        # Adjust k based on text statistics
+        max_k = min(k, int(math.log(n, sigma)))
         
-        if k == 0:
-            # Zero-order entropy with tighter bounds
-            freq = Counter(text)
-            h0 = 0
-            for count in freq.values():
-                p = count / n
-                h0 -= p * math.log2(p)
-            # Add lower bound from paper
-            return max(h0, math.log2(sigma) / (k + 1))
-        
-        # k-th order entropy calculation
+        # Initialize context statistics
         contexts = defaultdict(Counter)
         total_entropy = 0
-        processed_chars = 0
         
-        # Process in blocks to handle context boundaries
-        block_size = n - k
-        for i in range(block_size):
-            context = text[i:i+k]
-            next_char = text[i+k]
+        # Process overlapping blocks for better context coverage
+        for i in range(n - max_k):
+            context = text[i:i+max_k]
+            next_char = text[i+max_k]
             contexts[context][next_char] += 1
-            processed_chars += 1
         
-        # Calculate entropy with proper normalization
-        for context_counts in contexts.values():
-            context_total = sum(context_counts.values())
+        # Calculate conditional entropy for each context
+        total_chars = n - max_k
+        for context, char_counts in contexts.items():
+            context_total = sum(char_counts.values())
             if context_total > 0:
-                context_h0 = 0
-                for count in context_counts.values():
+                # Calculate conditional entropy H(X|context)
+                context_entropy = 0
+                for count in char_counts.values():
                     p = count / context_total
-                    context_h0 -= p * math.log2(p)
-                total_entropy += context_total * context_h0
+                    context_entropy -= p * math.log2(p)
+                # Weight by context frequency
+                total_entropy += (context_total / total_chars) * context_entropy
         
-        # Normalize by processed characters
-        return max(total_entropy / processed_chars, math.log2(sigma) / (k + 1))
+        # Apply correction factor for shorter contexts
+        if max_k > 0:
+            correction = (max_k * math.log2(sigma)) / n
+            total_entropy = max(total_entropy - correction, 0)
+        
+        return total_entropy
 
     def _calculate_compressed_size(self):
-        """Calculate compressed size with tighter bounds"""
+        """Calculate compressed size with enhanced compression"""
         if not self.use_compression:
-            return self.n * math.ceil(math.log2(self.sigma))
+            return super()._calculate_compressed_size()
         
         n = self.n
         sigma = self.sigma
         
-        # Calculate effective k
-        alpha = 0.5
-        max_k = int(alpha * math.log(n, sigma))
-        effective_k = min(self.k, max_k)
+        # Calculate effective k for entropy
+        effective_k = min(self.k, int(0.5 * math.log(n, sigma)))
         
-        # Calculate entropy
+        # Base entropy calculation
         hk = self.calculate_high_order_entropy(self.text, effective_k)
-        
-        # Main component with tighter bound
         main_space = n * hk
         
-        # Auxiliary structures with minimal overhead
-        log_n = math.log2(n)
-        log_sigma = math.log2(sigma)
+        # Run-length compression savings
+        run_savings = sum(length - 1 for _, length in self.run_lengths)
+        run_overhead = len(self.run_lengths) * (math.log2(n) + math.log2(sigma))
         
-        # Wavelet tree: O(n/logn)
-        wt_overhead = n / log_n
+        # Context model compression
+        context_savings = 0
+        context_overhead = 0
+        for k, contexts in self.context_stats.items():
+            for context, counts in contexts.items():
+                total = sum(counts.values())
+                if total > 0:
+                    best_prob = max(count/total for count in counts.values())
+                    if best_prob > 0.8:  # High probability threshold
+                        context_savings += total * (1 - math.log2(1/best_prob))
+                        context_overhead += len(context) * math.log2(sigma)
         
-        # Ψ samples: O(n/logn)
-        sample_overhead = n / log_n
-        
-        # Count array: O(σ log n)
-        count_overhead = sigma * math.log2(log_n)  # Reduced from log(n)
-        
-        # Occ array with better compression
-        block_size = int(log_n)
-        occ_blocks = n // block_size
-        occ_overhead = occ_blocks * log_sigma
-        
-        # Sublinear term from paper
-        sublinear = n / (log_n * log_sigma)
-        
-        total_size = main_space * (1 + 1/log_n) + (
-            wt_overhead +
-            sample_overhead +
-            count_overhead +
-            occ_overhead +
-            sublinear
+        # Calculate total size with all optimizations
+        total_size = (
+            main_space * (1 + 1/math.log2(n)) -  # Base size
+            run_savings + run_overhead +          # Run-length adjustment
+            context_savings + context_overhead    # Context model adjustment
         )
         
         return total_size
@@ -375,3 +370,98 @@ class CompressedSuffixArray:
                 if c == char:
                     count += 1
                 self.rank_dict[char].append(count)
+
+    def _compute_run_lengths(self):
+        """Compute run lengths in BWT for better compression"""
+        runs = []
+        current_run = 1
+        
+        for i in range(1, len(self.bwt)):
+            if self.bwt[i] == self.bwt[i-1]:
+                current_run += 1
+            else:
+                if current_run >= self.run_length_threshold:
+                    runs.append((self.bwt[i-1], current_run))
+                current_run = 1
+                
+        return runs
+        
+    def _build_context_statistics(self):
+        """Build enhanced context statistics for higher-order compression"""
+        contexts = defaultdict(lambda: defaultdict(Counter))
+        n = len(self.text)
+        
+        # Process multiple context lengths simultaneously
+        for k in range(1, self.context_order + 1):
+            # Use sliding window for context gathering
+            window_size = k + 1  # context + next char
+            for i in range(n - window_size + 1):
+                context = self.text[i:i+k]
+                next_char = self.text[i+k]
+                
+                # Store both forward and reverse contexts
+                contexts[k][context][next_char] += 1
+                rev_context = context[::-1]
+                contexts[k][rev_context][next_char] += 1
+                
+                # Add partial contexts for better modeling
+                if k > 1:
+                    for j in range(1, k):
+                        partial = context[j:]
+                        contexts[k-j][partial][next_char] += 1
+        
+        # Prune ineffective contexts
+        pruned_contexts = defaultdict(lambda: defaultdict(Counter))
+        min_context_freq = max(5, int(math.log2(n)))
+        
+        for k, k_contexts in contexts.items():
+            for context, char_counts in k_contexts.items():
+                total_count = sum(char_counts.values())
+                if total_count >= min_context_freq:
+                    # Calculate context effectiveness
+                    max_prob = max(count/total_count for count in char_counts.values())
+                    if max_prob > 0.5:  # Keep contexts with good prediction power
+                        pruned_contexts[k][context] = char_counts
+        
+        return pruned_contexts
+        
+    def _compress_bwt(self):
+        """Compress BWT using enhanced context modeling"""
+        compressed = []
+        i = 0
+        
+        while i < len(self.bwt):
+            # Check for runs first
+            run_length = 1
+            while i + run_length < len(self.bwt) and self.bwt[i + run_length] == self.bwt[i]:
+                run_length += 1
+                
+            if run_length >= self.run_length_threshold:
+                compressed.append(('R', self.bwt[i], run_length))
+                i += run_length
+                continue
+            
+            # Try context-based compression
+            best_prediction = None
+            best_confidence = 0
+            
+            # Check all available context lengths
+            for k in range(min(self.context_order, i), 0, -1):
+                context = self.text[i-k:i]
+                if context in self.context_stats[k]:
+                    counts = self.context_stats[k][context]
+                    total = sum(counts.values())
+                    if total > 0:
+                        for char, count in counts.items():
+                            prob = count / total
+                            if prob > best_confidence:
+                                best_confidence = prob
+                                best_prediction = (k, context, char)
+            
+            if best_prediction and best_confidence > 0.7:
+                compressed.append(('C', best_prediction))
+            else:
+                compressed.append(('L', self.bwt[i]))
+            i += 1
+        
+        return compressed
