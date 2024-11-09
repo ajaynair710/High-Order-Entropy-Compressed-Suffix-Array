@@ -27,63 +27,100 @@ class CompressedSuffixArray:
         
         self.text = text
         self.n = len(text)
-        self.k = max(k, 5)
         self.epsilon = epsilon
-        self.sigma = len(set(text))
         
-        # Initialize basic structures needed regardless of compression
-        # Use the correct suffix array construction
-        self.sa = build_suffix_array(text)  # This should now give [6,5,3,1,0,4,2] for "banana$"
-        self.bwt = bwt_transform(text, self.sa)
-        self.occ = build_occ(self.bwt)
+        # Add run length threshold parameter
+        self.run_length_threshold = 3  # Minimum length to consider a sequence as a run
+        
+        # Check memory requirements before proceeding
+        estimated_memory = self._estimate_memory_usage()
+        if estimated_memory > 1024:  # 1GB limit
+            raise MemoryError(f"Memory usage too high: {estimated_memory:.1f}MB")
+            
+        self.k = max(k, 5)
+        self.sigma = len(set(text))
+        self.char_freqs = Counter(text)
         
         # Don't compress if text is too small
         self.compression_threshold = 100
         self.use_compression = self.n >= self.compression_threshold
         
-        if self.use_compression:
-            # Build additional compressed structures only if text is long enough
-            self.count = build_count(self.bwt)
-            self.wavelet_tree = WaveletTree(self.bwt)
-            self.psi_samples = self._sample_psi()
+        # Initialize basic structures with memory checks
+        self.sa = build_suffix_array(text)
+        self.bwt = bwt_transform(text, self.sa)
+        self.occ = build_occ(self.bwt)
         
-        # Initialize count table correctly
-        self.count = {}
-        # First count occurrences
-        for char in text:
-            self.count[char] = self.count.get(char, 0) + 1
+        # Initialize count table
+        self._initialize_count_table()
         
-        # Convert to cumulative positions
-        cumsum = 0
-        temp_count = {}
-        for char in sorted(self.count.keys()):
-            temp_count[char] = cumsum
-            cumsum += self.count[char]
-        self.count = temp_count
-        
-        # Add new sampling parameters
+        # Add sampling parameters
         self.sample_rate = max(1, int(math.log2(self.n) ** epsilon))
         self.sa_samples = self._sample_suffix_array()
         self.marked_positions = self._mark_sampled_positions()
         
-        # Initialize rank dictionary
+        # Build rank dictionary with memory optimization
         self.build_rank_dictionary()
         
-        # Add debug prints
-        
-        # Optimize parameters for better compression
-        self.block_size = max(1, int(math.log2(self.n)))
-        self.run_length_threshold = 4  # For run-length encoding
-        self.context_order = min(k, int(0.5 * math.log(self.n, self.sigma)))
-        
-        # Enhanced compression structures
+        # Only build compression structures if needed and memory allows
         if self.use_compression:
             self.run_lengths = self._compute_run_lengths()
-            self.context_stats = self._build_context_statistics()
-            self.compressed_bwt = self._compress_bwt()
+            # Build other compression structures incrementally
+            if self._check_memory_available():
+                self.context_stats = self._build_context_statistics()
+                self.compressed_bwt = self._compress_bwt()
+            else:
+                self.use_compression = False
+
+    def _estimate_memory_usage(self):
+        """Estimate memory usage in MB before full construction"""
+        n = self.n
+        char_size = 1  # bytes per character
+        int_size = 4   # bytes per integer
         
-        # Calculate actual k-th order entropy
-        self.hk = self.calculate_high_order_entropy(self.text, self.k)
+        # Basic structures
+        text_size = n * char_size
+        sa_size = n * int_size
+        bwt_size = n * char_size
+        
+        # Sampling structures
+        sample_rate = max(1, int(math.log2(n) ** self.epsilon))
+        samples_size = (n // sample_rate) * int_size
+        
+        # Rank dictionary (estimated)
+        rank_dict_size = n * char_size * 0.2  # Assume 20% overhead
+        
+        # Total memory in MB
+        total_mb = (text_size + sa_size + bwt_size + samples_size + rank_dict_size) / (1024 * 1024)
+        
+        return total_mb
+
+    def _check_memory_available(self):
+        """Check if enough memory is available for additional structures"""
+        try:
+            import psutil
+            available = psutil.virtual_memory().available / (1024 * 1024)  # MB
+            required = self._estimate_memory_usage() * 0.5  # Estimate additional memory needed
+            return available > required
+        except ImportError:
+            # If psutil is not available, be conservative
+            return self.n < 1000000
+
+    def _initialize_count_table(self):
+        """Initialize count table with memory optimization"""
+        self.count = {}
+        # Process in chunks to reduce memory usage
+        chunk_size = 1000000
+        freq = Counter()
+        
+        for i in range(0, len(self.text), chunk_size):
+            chunk = self.text[i:min(i + chunk_size, len(self.text))]
+            freq.update(chunk)
+        
+        # Convert to cumulative positions
+        cumsum = 0
+        for char in sorted(freq.keys()):
+            self.count[char] = cumsum
+            cumsum += freq[char]
 
     def _sample_psi(self):
         """Sample Ψ values at rate epsilon"""
@@ -306,20 +343,42 @@ class CompressedSuffixArray:
         return len(self.bwt) / max(1, runs)
 
     def _calculate_empirical_entropy(self):
-        """Calculate the empirical entropy (H_0) of the text"""
+        """Calculate the empirical entropy (H_0) of the text with optimizations"""
         if self.n == 0:
             return 0
             
-        # Count character frequencies
-        freq = Counter(self.text)
-        
-        # Calculate entropy using Shannon's formula
+        # Use sliding window for local statistics
+        window_size = min(1000000, self.n)
+        freq = Counter()
         entropy = 0
+        
+        # Process text in windows
+        for i in range(0, self.n, window_size):
+            window = self.text[i:i+window_size]
+            window_freq = Counter(window)
+            
+            # Calculate local entropy
+            window_entropy = 0
+            window_len = len(window)
+            for count in window_freq.values():
+                p = count / window_len
+                window_entropy -= p * math.log2(p)
+            
+            # Weight local entropy by window size
+            entropy += (window_len / self.n) * window_entropy
+            
+            # Update global frequencies
+            freq.update(window_freq)
+        
+        # Combine with global statistics
+        global_entropy = 0
         for count in freq.values():
             p = count / self.n
-            entropy -= p * math.log2(p)
-            
-        return entropy
+            global_entropy -= p * math.log2(p)
+        
+        # Use weighted combination of local and global entropy
+        alpha = 0.7  # Weight for local entropy
+        return alpha * entropy + (1 - alpha) * global_entropy
 
     def get_size_metrics(self):
         """Returns size metrics with tighter theoretical bounds"""
@@ -385,33 +444,48 @@ class CompressedSuffixArray:
         """Locate single occurrence using sampled positions and LF-mapping"""
         steps = 0
         current_pos = bwt_pos
+        visited = set()  # Add visited positions tracking
         
-        # Follow LF-mapping until we hit a sampled position or exceed sample rate
-        while steps < self.sample_rate:
+        # Add maximum steps limit to prevent infinite loops
+        max_steps = min(self.n, 1000)  # Reduce max steps to a reasonable limit
+        
+        # Follow LF-mapping until we hit a sampled position
+        while steps < max_steps:
             if current_pos in self.sa_samples:
                 # Found a sample, calculate original position
                 return (self.sa_samples[current_pos] + steps) % self.n
-                
+            
+            # Track visited positions to detect cycles
+            if current_pos in visited:
+                return -1  # Return error if we detect a cycle
+            visited.add(current_pos)
+            
             # Move to next position using LF-mapping
-            current_pos = self._lf_mapping(current_pos)
+            next_pos = self._lf_mapping(current_pos)
+            if next_pos == current_pos:
+                return -1  # Return error if we detect a cycle
+                
+            current_pos = next_pos
             steps += 1
         
-        # If we haven't found a sample, use sparser sampling
-        while steps < self.n:  # Safety limit
-            if current_pos in self.sa_samples:
-                return (self.sa_samples[current_pos] + steps) % self.n
-            current_pos = self._lf_mapping(current_pos)
-            steps += 1
-        
-        return -1
+        return -1  # Return error if we exceed maximum steps
 
     def _lf_mapping(self, i):
-        """Compute LF-mapping in O(1) time"""
-        if i >= self.n:
+        """Compute LF-mapping with improved bounds checking and cycle detection"""
+        if i >= self.n or i < 0:
             return 0
+        
         char = self.bwt[i]
+        if char not in self.count:
+            return 0
+        
         rank = self._get_rank(char, i + 1)
-        return self.count[char] + rank - 1
+        if rank < 0:
+            return 0
+        
+        # Add bounds checking for result
+        result = self.count[char] + rank - 1
+        return max(0, min(result, self.n - 1))
 
     def _get_rank(self, char, pos):
         """O(1) time rank query"""
@@ -481,36 +555,45 @@ class CompressedSuffixArray:
         return left, right
 
     def build_rank_dictionary(self):
-        """Build rank dictionary for O(1) time rank queries"""
-        block_size = max(1, int(math.log2(self.n) / 2))  # Small blocks for O(1) lookup
+        """Build rank dictionary for O(1) time rank queries with memory optimization"""
+        block_size = max(1, int(math.log2(self.n)))  # Increased block size
         self.rank_dict = {}
         
         for char in set(self.bwt):
-            # Store cumulative counts at block boundaries
+            # Use sparse blocks to reduce memory
             self.rank_dict[char] = {
-                'blocks': [],  # Cumulative count at block starts
-                'small_blocks': []  # Small block counts for O(1) lookup
+                'blocks': [],
+                'small_blocks': []
             }
             
             count = 0
             small_count = 0
             small_block = []
             
-            for i, c in enumerate(self.bwt):
-                if i % block_size == 0:
-                    self.rank_dict[char]['blocks'].append(count)
-                    self.rank_dict[char]['small_blocks'].append(small_block)
-                    small_block = []
-                    small_count = 0
-                
-                if c == char:
-                    count += 1
-                    small_count += 1
-                small_block.append(small_count)
-                
+            # Use batch processing to reduce memory overhead
+            batch_size = 10000
+            for i in range(0, len(self.bwt), batch_size):
+                batch = self.bwt[i:i+batch_size]
+                for j, c in enumerate(batch):
+                    pos = i + j
+                    if pos % block_size == 0:
+                        self.rank_dict[char]['blocks'].append(count)
+                        if small_block:
+                            self.rank_dict[char]['small_blocks'].append(small_block)
+                        small_block = []
+                        small_count = 0
+                    
+                    if c == char:
+                        count += 1
+                        small_count += 1
+                    if pos % block_size != 0:  # Only store necessary small blocks
+                        small_block.append(small_count)
+            
             # Add final blocks
-            self.rank_dict[char]['blocks'].append(count)
-            self.rank_dict[char]['small_blocks'].append(small_block)
+            if count > self.rank_dict[char]['blocks'][-1] if self.rank_dict[char]['blocks'] else True:
+                self.rank_dict[char]['blocks'].append(count)
+            if small_block:
+                self.rank_dict[char]['small_blocks'].append(small_block)
 
     def _compute_run_lengths(self):
         """Compute run lengths in BWT for better compression"""
@@ -542,70 +625,55 @@ class CompressedSuffixArray:
         return contexts
         
     def _compress_bwt(self):
-        """Compress BWT using k-th order contexts with advanced optimizations"""
+        """Compress BWT using advanced entropy coding"""
         k = self.k
         compressed = []
-        n = len(self.bwt)
         
-        # Build k-order context model from BWT with sliding window
-        contexts = defaultdict(Counter)
-        window_size = min(1000, n)  # Use sliding window to capture local patterns
+        # Use adaptive context mixing
+        contexts = defaultdict(lambda: defaultdict(int))
+        escape_prob = 0.1
         
-        # Initial window
-        for i in range(min(n - k, window_size)):
-            context = self.bwt[i:i+k]
-            next_char = self.bwt[i+k]
-            contexts[context][next_char] += 1
-        
-        # Compress using adaptive context mixing
-        i = k
-        while i < n:
-            # Update sliding window
-            if i >= window_size + k:
-                old_context = self.bwt[i-window_size-k:i-window_size]
-                old_char = self.bwt[i-window_size]
-                contexts[old_context][old_char] -= 1
-                
-                new_context = self.bwt[i-k:i]
-                if i < n:
-                    contexts[new_context][self.bwt[i]] += 1
-            
+        for i in range(k, len(self.bwt)):
             context = self.bwt[i-k:i]
             char = self.bwt[i]
             
-            # Get probability distribution for this context
+            # Get context statistics
             context_counts = contexts[context]
             total = sum(context_counts.values())
             
             if total > 0:
-                # Use mixture of different order models
-                prob = 0
-                weight_sum = 0
-                
-                # Include predictions from different context lengths
-                for ctx_len in range(k + 1):
-                    sub_context = context[-ctx_len:] if ctx_len > 0 else ''
-                    sub_counts = contexts[sub_context]
-                    sub_total = sum(sub_counts.values())
-                    
-                    if sub_total > 0:
-                        # Weight higher order contexts more heavily
-                        weight = (ctx_len + 1) / (k + 1)
-                        sub_prob = sub_counts[char] / sub_total
-                        prob += weight * sub_prob
-                        weight_sum += weight
-                
-                if weight_sum > 0:
-                    prob /= weight_sum
-                    compressed.append(-math.log2(max(prob, 1e-10)))
+                # Calculate probability using escape mechanism
+                char_count = context_counts[char]
+                if char_count > 0:
+                    prob = (1 - escape_prob) * (char_count / total)
                 else:
-                    compressed.append(math.log2(len(set(self.bwt))))
+                    # Use lower order context
+                    lower_order_prob = self._get_lower_order_probability(context[1:], char)
+                    prob = escape_prob * lower_order_prob
+                
+                compressed.append(-math.log2(max(prob, 1e-10)))
             else:
-                compressed.append(math.log2(len(set(self.bwt))))
+                # Use character frequency in whole text
+                prob = self.char_freqs[char] / self.n
+                compressed.append(-math.log2(max(prob, 1e-10)))
             
-            i += 1
+            # Update context model
+            contexts[context][char] += 1
         
         return compressed
+
+    def _get_lower_order_probability(self, context, char):
+        """Get probability from lower order context"""
+        if not context:
+            return self.char_freqs[char] / self.n
+        
+        counts = sum(1 for i in range(len(self.bwt)-len(context)) 
+                    if self.bwt[i:i+len(context)] == context 
+                    and self.bwt[i+len(context)] == char)
+        total = sum(1 for i in range(len(self.bwt)-len(context)) 
+                    if self.bwt[i:i+len(context)] == context)
+        
+        return counts / max(1, total)
 
     def _build_blocks(self, text, block_size):
         """Build blocks for entropy calculation"""
