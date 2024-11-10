@@ -138,8 +138,40 @@ def ksa(T):
     return result
 
 def build_suffix_array(text):
-    T = [ord(c) for c in text]
-    return ksa(T)
+    """Build suffix array ensuring all suffixes are included"""
+    n = len(text)
+    
+    # Create list of (suffix, index) pairs
+    suffixes = []
+    for i in range(n):
+        suffixes.append((text[i:], i))
+    
+    # Sort suffixes lexicographically
+    suffixes.sort()  # This sorts based on the suffix string
+    
+    # Extract indices to form suffix array
+    sa = [index for (_, index) in suffixes]
+    
+    # Validate length
+    if len(sa) != n:
+        # Debug output
+        print(f"Warning: Generated {len(sa)} suffixes for text of length {n}")
+        print("First few missing positions:", set(range(n)) - set(sa))
+        
+        # Ensure all positions are included
+        positions = set(range(n))
+        missing = positions - set(sa)
+        
+        # Add any missing positions
+        for pos in missing:
+            # Insert at correct position to maintain lexicographic order
+            suffix = text[pos:]
+            insert_pos = 0
+            while insert_pos < len(sa) and text[sa[insert_pos]:] < suffix:
+                insert_pos += 1
+            sa.insert(insert_pos, pos)
+    
+    return sa
 
 # def test_suffix_array():
 #     # Test case 1: Simple string "banana$"
