@@ -21,55 +21,89 @@ class CompressedSuffixArray:
             epsilon: Sampling rate for Ψ values (controls space/time tradeoff)
             k: Order of entropy compression
         """
-        # Add end marker if not present
-        if text[-1] != '$':
-            text = text + '$'
+        # Validate input text
+        if not text or not isinstance(text, str):
+            raise ValueError("Invalid input text")
+
+        # Verify text ends with $
+        if not text.endswith('$'):
+            text = text + '$'  # Add terminator if missing
+
+        # Remove any null bytes or invalid characters that might cause issues
+        text = ''.join(c for c in text if ord(c) > 0)
         
         self.text = text
         self.n = len(text)
         self.epsilon = epsilon
+        self.k = max(k, 5)
         
         # Add run length threshold parameter
-        self.run_length_threshold = 3  # Minimum length to consider a sequence as a run
+        self.run_length_threshold = 3
         
         # Check memory requirements before proceeding
         estimated_memory = self._estimate_memory_usage()
         if estimated_memory > 1024:  # 1GB limit
             raise MemoryError(f"Memory usage too high: {estimated_memory:.1f}MB")
+        
+        try:
+            # Build suffix array with validation
+            self.sa = build_suffix_array(self.text)
             
-        self.k = max(k, 5)
-        self.sigma = len(set(text))
-        self.char_freqs = Counter(text)
-        
-        # Don't compress if text is too small
-        self.compression_threshold = 100
-        self.use_compression = self.n >= self.compression_threshold
-        
-        # Initialize basic structures with memory checks
-        self.sa = build_suffix_array(text)
-        self.bwt = bwt_transform(text, self.sa)
-        self.occ = build_occ(self.bwt)
-        
-        # Initialize count table
-        self._initialize_count_table()
-        
-        # Add sampling parameters
-        self.sample_rate = max(1, int(math.log2(self.n) ** epsilon))
-        self.sa_samples = self._sample_suffix_array()
-        self.marked_positions = self._mark_sampled_positions()
-        
-        # Build rank dictionary with memory optimization
-        self.build_rank_dictionary()
-        
-        # Only build compression structures if needed and memory allows
-        if self.use_compression:
-            self.run_lengths = self._compute_run_lengths()
-            # Build other compression structures incrementally
-            if self._check_memory_available():
-                self.context_stats = self._build_context_statistics()
-                self.compressed_bwt = self._compress_bwt()
-            else:
-                self.use_compression = False
+            # Debug output
+            if len(self.sa) != self.n:
+                print(f"Debug info:")
+                print(f"Text length: {self.n}")
+                print(f"Suffix array length: {len(self.sa)}")
+                print(f"First 10 chars of text: {self.text[:10]}")
+                print(f"Last 10 chars of text: {self.text[-10:]}")
+                
+                # Try to rebuild with explicit terminator handling
+                cleaned_text = text.rstrip('$') + '$'
+                self.text = cleaned_text
+                self.n = len(cleaned_text)
+                self.sa = build_suffix_array(cleaned_text)
+                
+                if len(self.sa) != self.n:
+                    raise ValueError(f"Suffix array length mismatch. Expected {self.n}, got {len(self.sa)}")
+            
+            # Verify suffix array indices
+            if not all(isinstance(x, int) and 0 <= x < self.n for x in self.sa):
+                raise ValueError("Suffix array contains invalid indices")
+            
+            # Initialize basic properties
+            self.sigma = len(set(text))
+            self.char_freqs = Counter(text)
+            
+            # Don't compress if text is too small
+            self.compression_threshold = 100
+            self.use_compression = self.n >= self.compression_threshold
+            
+            # Initialize basic structures with memory checks
+            self.bwt = bwt_transform(text, self.sa)
+            self.occ = build_occ(self.bwt)
+            
+            # Initialize count table
+            self._initialize_count_table()
+            
+            # Add sampling parameters
+            self.sample_rate = max(1, int(math.log2(self.n) ** epsilon))
+            self.sa_samples = self._sample_suffix_array()
+            self.marked_positions = self._mark_sampled_positions()
+            
+            # Build rank dictionary with memory optimization
+            self.build_rank_dictionary()
+            
+            # Only build compression structures if needed and memory allows
+            if self.use_compression:
+                self.run_lengths = self._compute_run_lengths()
+                if self._check_memory_available():
+                    self.context_stats = self._build_context_statistics()
+                    self.compressed_bwt = self._compress_bwt()
+                else:
+                    self.use_compression = False
+                    
+        except Exception as e:
+            raise ValueError(f"Initialization failed: {str(e)}")
 
     def _estimate_memory_usage(self):
         """Estimate memory usage in MB before full construction"""
@@ -407,11 +441,23 @@ class CompressedSuffixArray:
         }
 
     def _sample_suffix_array(self):
-        """Sample suffix array at rate (log n)^ε"""
+        """Sample suffix array positions at rate (log n)^ε"""
         samples = {}
+        
+        # Verify self.sa exists and is properly initialized
+        if not hasattr(self, 'sa') or not self.sa:
+            return samples
+            
+        # Sample at regular positions with bounds checking
         for i in range(0, self.n, self.sample_rate):
             if i < len(self.sa):  # Add bounds check
                 samples[i] = self.sa[i]
+        
+        # Also sample positions that are multiples of sample_rate in text
+        for i, sa_val in enumerate(self.sa):
+            if sa_val % self.sample_rate == 0:
+                samples[i] = sa_val
+                
         return samples
 
     def _mark_sampled_positions(self):
@@ -423,15 +469,12 @@ class CompressedSuffixArray:
 
     def locate(self, pattern):
         """Locate all occurrences of pattern with (log n)^ε time per occurrence"""
-        # First find the interval in BWT
+        # Find BWT interval
         left, right = self._find_interval(pattern)
         if left > right:
-            print("Pattern not found")
             return []
         
-        # print(f"Found interval [{left}, {right}] in BWT")
-        
-        # Use sampled positions and LF-mapping for faster location
+        # Use optimized location with sampling
         occurrences = []
         for i in range(left, right + 1):
             pos = self._locate_single(i)
@@ -441,37 +484,27 @@ class CompressedSuffixArray:
         return sorted(occurrences)
 
     def _locate_single(self, bwt_pos):
-        """Locate single occurrence using sampled positions and LF-mapping"""
+        """Locate single occurrence using sampled positions with (log n)^ε time"""
         steps = 0
         current_pos = bwt_pos
-        visited = set()  # Add visited positions tracking
         
-        # Add maximum steps limit to prevent infinite loops
-        max_steps = min(self.n, 1000)  # Reduce max steps to a reasonable limit
-        
-        # Follow LF-mapping until we hit a sampled position
-        while steps < max_steps:
-            if current_pos in self.sa_samples:
-                # Found a sample, calculate original position
-                return (self.sa_samples[current_pos] + steps) % self.n
-            
-            # Track visited positions to detect cycles
-            if current_pos in visited:
-                return -1  # Return error if we detect a cycle
-            visited.add(current_pos)
-            
-            # Move to next position using LF-mapping
-            next_pos = self._lf_mapping(current_pos)
-            if next_pos == current_pos:
-                return -1  # Return error if we detect a cycle
-                
-            current_pos = next_pos
+        # Follow LF-mapping until we hit a sampled position or text position multiple
+        while current_pos not in self.sa_samples:
+            current_pos = self._lf_mapping(current_pos)
             steps += 1
+            # Check if we've found a position that maps to a multiple of sample_rate
+            if self.sa[current_pos] % self.sample_rate == 0:
+                return (self.sa[current_pos] + steps) % self.n
+            
+            # Prevent infinite loops
+            if steps >= self.n:
+                return -1
         
-        return -1  # Return error if we exceed maximum steps
+        # Found a sampled position
+        return (self.sa_samples[current_pos] + steps) % self.n
 
     def _lf_mapping(self, i):
-        """Compute LF-mapping with improved bounds checking and cycle detection"""
+        """Compute LF-mapping efficiently using rank dictionary"""
         if i >= self.n or i < 0:
             return 0
         
@@ -479,13 +512,9 @@ class CompressedSuffixArray:
         if char not in self.count:
             return 0
         
+        # Use O(1) rank query
         rank = self._get_rank(char, i + 1)
-        if rank < 0:
-            return 0
-        
-        # Add bounds checking for result
-        result = self.count[char] + rank - 1
-        return max(0, min(result, self.n - 1))
+        return self.count[char] + rank - 1
 
     def _get_rank(self, char, pos):
         """O(1) time rank query"""
