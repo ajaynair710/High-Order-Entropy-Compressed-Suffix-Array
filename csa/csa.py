@@ -93,6 +93,9 @@ class CompressedSuffixArray:
             # Build rank dictionary with memory optimization
             self.build_rank_dictionary()
             
+            # Initialize wavelet tree for O(1) rank queries
+            self.wavelet_tree = WaveletTree(self.bwt)
+            
             # Only build compression structures if needed and memory allows
             if self.use_compression:
                 self.run_lengths = self._compute_run_lengths()
@@ -441,19 +444,19 @@ class CompressedSuffixArray:
         }
 
     def _sample_suffix_array(self):
-        """Sample suffix array positions at rate (log n)^ε"""
+        """Sample suffix array to guarantee O((log n)^ε) locate time"""
         samples = {}
         
-        # Verify self.sa exists and is properly initialized
-        if not hasattr(self, 'sa') or not self.sa:
-            return samples
-            
-        # Sample at regular positions with bounds checking
-        for i in range(0, self.n, self.sample_rate):
-            if i < len(self.sa):  # Add bounds check
-                samples[i] = self.sa[i]
+        # Calculate sample rate based on epsilon parameter
+        self.sample_rate = max(1, int(math.log2(self.n) ** self.epsilon))
         
-        # Also sample positions that are multiples of sample_rate in text
+        # Sample two types of positions:
+        # 1. Regular positions at rate (log n)^ε
+        for i in range(0, self.n, self.sample_rate):
+            samples[i] = self.sa[i]
+        
+        # 2. Positions where SA[i] is multiple of sample_rate
+        # This ensures we can find a sample within (log n)^ε steps
         for i, sa_val in enumerate(self.sa):
             if sa_val % self.sample_rate == 0:
                 samples[i] = sa_val
@@ -468,75 +471,60 @@ class CompressedSuffixArray:
         return marked
 
     def locate(self, pattern):
-        """Locate all occurrences of pattern with (log n)^ε time per occurrence"""
+        """Locate all occurrences of pattern with O((log n)^ε) time per occurrence"""
         # Find BWT interval
         left, right = self._find_interval(pattern)
         if left > right:
             return []
         
         # Use optimized location with sampling
-        occurrences = []
+        occurrences = set()  # Use set to avoid duplicates
         for i in range(left, right + 1):
             pos = self._locate_single(i)
-            if pos != -1:
-                occurrences.append(pos)
+            if pos != -1 and pos < self.n:  # Only add valid positions
+                occurrences.add(pos)
         
-        return sorted(occurrences)
+        return sorted(list(occurrences))
 
     def _locate_single(self, bwt_pos):
-        """Locate single occurrence using sampled positions with (log n)^ε time"""
+        """Locate single occurrence using sampled positions with O((log n)^ε) time"""
         steps = 0
         current_pos = bwt_pos
         
-        # Follow LF-mapping until we hit a sampled position or text position multiple
-        while current_pos not in self.sa_samples:
-            current_pos = self._lf_mapping(current_pos)
-            steps += 1
-            # Check if we've found a position that maps to a multiple of sample_rate
-            if self.sa[current_pos] % self.sample_rate == 0:
-                return (self.sa[current_pos] + steps) % self.n
-            
-            # Prevent infinite loops
-            if steps >= self.n:
+        # Follow LF-mapping until we hit a sampled position
+        while steps < self.sample_rate:  # Limit the number of steps
+            # Check if current position is sampled
+            if current_pos in self.sa_samples:
+                text_pos = (self.sa_samples[current_pos] + steps) % self.n
+                return text_pos if text_pos < self.n else -1
+                
+            # Use O(1) LF-mapping with wavelet tree
+            next_pos = self._lf_mapping(current_pos)
+            if next_pos == current_pos:  # Detect cycles
                 return -1
+                
+            current_pos = next_pos
+            steps += 1
+            
+            # Check if we've hit a sampled position
+            if current_pos < len(self.sa) and self.sa[current_pos] % self.sample_rate == 0:
+                text_pos = (self.sa[current_pos] + steps) % self.n
+                return text_pos if text_pos < self.n else -1
         
-        # Found a sampled position
-        return (self.sa_samples[current_pos] + steps) % self.n
+        return -1  # Position not found within sample rate steps
 
     def _lf_mapping(self, i):
-        """Compute LF-mapping efficiently using rank dictionary"""
+        """O(1) time LF-mapping using wavelet tree"""
         if i >= self.n or i < 0:
             return 0
-        
+            
         char = self.bwt[i]
         if char not in self.count:
             return 0
-        
-        # Use O(1) rank query
-        rank = self._get_rank(char, i + 1)
-        return self.count[char] + rank - 1
-
-    def _get_rank(self, char, pos):
-        """O(1) time rank query"""
-        if pos == 0:
-            return 0
-        
-        block_size = max(1, int(math.log2(self.n) / 2))
-        block_idx = (pos - 1) // block_size
-        block_pos = (pos - 1) % block_size
-        
-        # Get base rank from blocks
-        if char not in self.rank_dict or block_idx >= len(self.rank_dict[char]['blocks']):
-            return 0
-        rank = self.rank_dict[char]['blocks'][block_idx]
-        
-        # Add small block contribution if available
-        if (block_pos > 0 and 
-            block_idx < len(self.rank_dict[char]['small_blocks']) and 
-            block_pos - 1 < len(self.rank_dict[char]['small_blocks'][block_idx])):
-            rank += self.rank_dict[char]['small_blocks'][block_idx][block_pos - 1]
-        
-        return rank
+    
+        # Use wavelet tree for O(1) rank query
+        rank = self.wavelet_tree.rank(char, i)
+        return self.count[char] + rank
 
     def _find_interval(self, pattern):
         """Find interval in BWT containing pattern occurrences"""
@@ -582,6 +570,28 @@ class CompressedSuffixArray:
         
         # print(f"Final interval: [{left}, {right}]")
         return left, right
+    
+    def _get_rank(self, char, pos):
+        """O(1) time rank query"""
+        if pos == 0:
+            return 0
+        
+        block_size = max(1, int(math.log2(self.n) / 2))
+        block_idx = (pos - 1) // block_size
+        block_pos = (pos - 1) % block_size
+        
+        # Get base rank from blocks
+        if char not in self.rank_dict or block_idx >= len(self.rank_dict[char]['blocks']):
+            return 0
+        rank = self.rank_dict[char]['blocks'][block_idx]
+        
+        # Add small block contribution if available
+        if (block_pos > 0 and 
+            block_idx < len(self.rank_dict[char]['small_blocks']) and 
+            block_pos - 1 < len(self.rank_dict[char]['small_blocks'][block_idx])):
+            rank += self.rank_dict[char]['small_blocks'][block_idx][block_pos - 1]
+        
+        return rank
 
     def build_rank_dictionary(self):
         """Build rank dictionary for O(1) time rank queries with memory optimization"""
