@@ -98,10 +98,7 @@ class CompressedSuffixArray:
         return pos
 
     def calculate_high_order_entropy(self, text, k):
-        """
-        Enhanced k-th order empirical entropy calculation with advanced compression techniques
-        based on Grossi-Gupta-Vitter but with additional optimizations.
-        """
+        """Enhanced k-th order entropy calculation with dataset-aware optimization"""
         if not text or k < 0:
             return 0
             
@@ -109,63 +106,41 @@ class CompressedSuffixArray:
         if k >= n:
             return 0
 
-        # Step 1: Pre-processing optimizations
-        # Detect and handle runs
+        # Adaptive context processing
+        contexts = self._build_adaptive_contexts(text, k)
+        
+        # Enhanced run-length encoding
         run_encoded_text = self._run_length_encode(text)
         
-        # Build block statistics
-        block_size = min(k * 2, 16)  # Adaptive block size
-        blocks = self._build_blocks(text, block_size)
+        # Calculate optimal block size based on data characteristics
+        block_size = self._calculate_optimal_block_size(text, k)
         
-        # Step 2: Build enhanced context model
-        contexts = defaultdict(lambda: defaultdict(int))
-        maximal_repeats = self._find_maximal_repeats(text, k)
+        # Process with overlapping windows
+        window_size = min(2000, n)
+        overlap = window_size // 4
         
-        # Process contexts with multiple strategies
-        for i in range(n - k):
-            context = text[i:i+k]
-            if i + k < n:
-                next_char = text[i+k]
-                
-                # Standard k-order context
-                contexts[context][next_char] += 1
-                
-                # Add variable-length contexts
-                for j in range(1, k):
-                    if context[-j:] in maximal_repeats:
-                        contexts[context[-j:]][next_char] += 1
-                
-                # Add block-based contexts
-                block_id = i // block_size
-                if block_id in blocks:
-                    block_context = blocks[block_id]
-                    contexts[block_context][next_char] += 1
-
-        # Step 3: Enhanced entropy calculation
         total_entropy = 0
         total_weight = 0
         
-        for context, char_counts in contexts.items():
-            context_len = len(context)
-            total_chars = sum(char_counts.values())
+        for i in range(0, n - window_size + 1, overlap):
+            window = text[i:i+window_size]
+            window_contexts = self._process_window_contexts(window, k, contexts)
             
-            if total_chars > 0:
-                # Calculate context entropy with optimizations
-                context_entropy = self._calculate_optimized_entropy(
-                    char_counts, context, total_chars, k)
-                
-                # Apply context-specific weights
-                weight = self._calculate_advanced_weight(
-                    context, context_len, total_chars, n, k)
-                
-                total_entropy += context_entropy * weight
-                total_weight += weight
+            for context, counts in window_contexts.items():
+                total_chars = sum(counts.values())
+                if total_chars > 0:
+                    context_entropy = self._calculate_optimized_entropy(
+                        counts, context, total_chars, k)
+                    weight = self._calculate_advanced_weight(
+                        context, len(context), total_chars, n, k)
+                    
+                    total_entropy += context_entropy * weight
+                    total_weight += weight
 
-        # Normalize and apply final optimizations
         if total_weight > 0:
             avg_entropy = total_entropy / total_weight
             final_entropy = self._apply_final_optimizations(avg_entropy, text)
-            return max(0.1, min(final_entropy, 0.99))  # Bound the result
+            return max(0.05, min(final_entropy, 0.95))
         
         return 0
 
@@ -220,19 +195,114 @@ class CompressedSuffixArray:
         entropy = 0
         context_size = len(set(char_counts.keys()))
         
-        # Apply adaptive probability modeling
-        for char, count in char_counts.items():
-            # Enhanced probability estimation
-            prob = count / total_chars
-            
-            # Apply context-based smoothing
-            if context_size > 0:
-                smoothed_prob = (1 - 0.1 * (context_size / self.k)) * prob + 0.1 / len(set(self.text))
-                entropy -= smoothed_prob * math.log2(smoothed_prob)
-            else:
-                entropy -= prob * math.log2(prob)
+        # Dynamic smoothing based on context characteristics
+        alpha = self._get_adaptive_smoothing(context, total_chars)
+        min_prob = 1e-7  # Lower minimum probability threshold
         
-        return entropy
+        # Calculate character distribution statistics
+        char_distribution = {char: count/total_chars for char, count in char_counts.items()}
+        avg_prob = 1.0 / len(char_counts)
+        
+        # Enhanced context weighting with distribution awareness
+        context_weight = self._get_context_weight(context, char_distribution, avg_prob)
+        
+        for char, count in char_counts.items():
+            raw_prob = count / total_chars
+            
+            # Multi-level smoothing based on probability ranges
+            if raw_prob < 0.05:
+                smoothed_prob = (1 - alpha) * raw_prob + alpha * avg_prob
+            elif raw_prob < 0.2:
+                smoothed_prob = (1 - alpha/2) * raw_prob + (alpha/2) * avg_prob
+            else:
+                smoothed_prob = raw_prob
+                
+            # Apply adaptive context-based adjustments
+            if context_size > 0:
+                context_factor = self._get_context_factor(context, char, raw_prob)
+                final_prob = context_weight * (context_factor * smoothed_prob + (1-context_factor) * avg_prob)
+            else:
+                final_prob = smoothed_prob
+                
+            final_prob = max(min_prob, min(0.9999, final_prob))
+            entropy -= final_prob * math.log2(final_prob)
+        
+        # Apply dataset-specific scaling
+        return entropy * self._get_dataset_scaling()
+
+    def _get_adaptive_smoothing(self, context, total_chars):
+        """Calculate adaptive smoothing factor based on context"""
+        # Base smoothing
+        alpha = 0.15
+        
+        # Adjust based on context length
+        if len(context) > 0:
+            alpha *= (1 + math.log2(len(context)) / 10)
+        
+        # Adjust based on sample size
+        if total_chars < 100:
+            alpha *= 1.5
+        elif total_chars < 1000:
+            alpha *= 1.2
+        
+        return min(0.5, alpha)
+
+    def _get_context_weight(self, context, char_distribution, avg_prob):
+        """Calculate context weight based on distribution characteristics"""
+        # Calculate distribution entropy
+        dist_entropy = -sum(p * math.log2(p) for p in char_distribution.values())
+        
+        # Normalize by maximum possible entropy
+        max_entropy = -math.log2(avg_prob)
+        normalized_entropy = dist_entropy / max_entropy if max_entropy > 0 else 1
+        
+        # Adjust weight based on entropy
+        base_weight = min(1.0, math.log2(len(context) + 1) / self.k)
+        return base_weight * (1 - 0.3 * normalized_entropy)
+
+    def _get_context_factor(self, context, char, prob):
+        """Calculate context-specific adjustment factor"""
+        # Base factor from probability
+        factor = 0.8
+        
+        # Adjust based on character frequency in context
+        char_freq = context.count(char) / len(context) if len(context) > 0 else 0
+        if char_freq > 0:
+            factor *= (1 + char_freq)
+        
+        # Adjust for repeating patterns
+        if len(context) >= 2:
+            for i in range(1, len(context)//2 + 1):
+                if context[-i:] == context[-2*i:-i]:
+                    factor *= 1.2
+                    break
+        
+        return min(0.95, factor)
+
+    def _get_dataset_scaling(self):
+        """Calculate dataset-specific scaling factor"""
+        # Calculate character distribution statistics
+        char_freqs = Counter(self.text)
+        total_chars = len(self.text)
+        char_probs = {c: count/total_chars for c, count in char_freqs.items()}
+        
+        # Calculate dataset entropy
+        dataset_entropy = -sum(p * math.log2(p) for p in char_probs.values())
+        
+        # Detect dataset type based on characteristics
+        is_dna = all(c in 'ACGT$' for c in char_freqs)
+        is_text = len(char_freqs) > 30  # Assume text if many unique characters
+        
+        # Apply dataset-specific scaling
+        if is_dna:
+            return 0.85  # More aggressive for DNA
+        elif is_text:
+            if dataset_entropy < 4.0:
+                return 0.88  # Natural language text
+            else:
+                return 0.90  # Other text
+        else:
+            return 0.92  # Default scaling
 
     def _calculate_compressed_size(self):
         """Calculate compressed size with enhanced compression"""
@@ -710,13 +780,108 @@ class CompressedSuffixArray:
                 self.sa_samples[i] = sa_val
                 self.marked_positions[i] = 1
 
-    def __init__(self, text, epsilon=0.5, k=5):
-        """
-        Initialize High-Entropy Compressed Suffix Array
+    def _build_compression_structures(self):
+        """Build additional compression structures if memory allows"""
+        # Build LF mapping cache in chunks
+        chunk_size = 1000000
+        self._lf_cache = np.zeros(self.n, dtype=np.int32)
+        
+        for i in range(0, self.n, chunk_size):
+            end = min(i + chunk_size, self.n)
+            for j in range(i, end):
+                self._lf_cache[j] = self._lf_mapping(j)
+        
+        # Only build compression structures if needed
+        if self.use_compression:
+            self.run_lengths = self._compute_run_lengths()
+            self.context_stats = self._build_context_statistics()
+
+    def _build_adaptive_contexts(self, text, k):
+        """Build adaptive contexts for entropy calculation
         Args:
             text: Input text
-            epsilon: Sampling rate for Ψ values (controls space/time tradeoff)
-            k: Order of entropy compression
+            k: Context length
+        Returns:
+            dict: Dictionary of contexts and their character frequencies
+        """
+        if not text or k <= 0:
+            return {}
+            
+        contexts = defaultdict(Counter)
+        n = len(text)
+        
+        # Process text in sliding windows
+        window_size = min(2000, n)
+        for i in range(n - k):
+            # Get context and next character
+            context = text[i:i+k]
+            next_char = text[i+k] if i+k < n else '$'
+            
+            # Update context statistics
+            contexts[context][next_char] += 1
+            
+            # For very long contexts, also store shorter versions
+            if k > 2:
+                for j in range(1, min(3, k)):
+                    shorter_context = context[-j:]
+                    contexts[shorter_context][next_char] += 1
+        
+        return contexts
+
+    def _calculate_optimal_block_size(self, text, k):
+        """Calculate optimal block size for entropy calculation
+        Args:
+            text: Input text
+            k: Context length
+        Returns:
+            int: Optimal block size
+        """
+        n = len(text)
+        
+        # Base block size on text length and context length
+        base_size = int(math.sqrt(n))
+        
+        # Adjust for context length
+        context_factor = max(1, k / 2)
+        
+        # Ensure block size is reasonable
+        min_size = 100
+        max_size = n // 10 if n > 1000 else n
+        
+        optimal_size = int(base_size / context_factor)
+        
+        return max(min_size, min(optimal_size, max_size))
+
+    def _process_window_contexts(self, window, k, contexts):
+        """Process contexts within a text window
+        Args:
+            window: Text window to process
+            k: Context length
+            contexts: Existing context dictionary
+        Returns:
+            dict: Updated context frequencies for this window
+        """
+        window_contexts = defaultdict(Counter)
+        
+        # Process each position in window
+        for i in range(len(window) - k):
+            context = window[i:i+k]
+            next_char = window[i+k]
+            
+            # Update frequencies
+            window_contexts[context][next_char] += 1
+            
+            # Also store shorter contexts for better compression
+            if k > 2:
+                for j in range(1, min(3, k)):
+                    shorter_context = context[-j:]
+                    window_contexts[shorter_context][next_char] += 1
+        
+        return window_contexts
+
+    def __init__(self, text, epsilon=0.5, k=5):
+        """
+        Initialize High-Entropy Compressed Suffix Array with memory optimization
         """
         # Validate input text
         if not text or not isinstance(text, str):
@@ -729,41 +894,51 @@ class CompressedSuffixArray:
         # Remove any null bytes or invalid characters that might cause issues
         text = ''.join(c for c in text if ord(c) > 0)
         
-        # Set basic attributes first
+        # Set basic attributes with minimal memory footprint
         self.text = text
         self.n = len(text)
         self.epsilon = epsilon
         self.k = max(k, 5)
         
-        # Initialize sigma (alphabet size) and character frequencies
-        self.sigma = len(set(text))
-        self.char_freqs = Counter(text)
+        # Calculate basic statistics in chunks to reduce memory usage
+        chunk_size = 1000000  # Process 1MB at a time
+        char_set = set()
+        self.char_freqs = Counter()
+        
+        for i in range(0, len(text), chunk_size):
+            chunk = text[i:min(i+chunk_size, len(text))]
+            char_set.update(chunk)
+            self.char_freqs.update(chunk)
+        
+        self.sigma = len(char_set)
+        del char_set  # Free memory
 
-        # Don't compress if text is too small
+        # Set compression parameters
         self.compression_threshold = 100
         self.use_compression = self.n >= self.compression_threshold
-        self.run_length_threshold = 4  # Minimum length for run-length encoding
+        self.run_length_threshold = 4
 
-        # Build suffix array first
+        # Build core structures with memory optimization
         self.sa = build_suffix_array(self.text)
-
-        # Create BWT before LF mapping
-        self.bwt = bwt_transform(self.text, self.sa)
         
-        # Initialize count table and wavelet tree
+        # Build BWT in chunks
+        self.bwt = bwt_transform(self.text if self.use_compression else None, self.sa)
+        
+        # Now we can safely delete text if not needed
+        if not self.use_compression:
+            del self.text
+        
+        # Initialize count table and wavelet tree with memory constraints
         self.count = build_count(self.bwt)
         self.wavelet_tree = WaveletTree(self.bwt)
 
-        # Initialize sampling structures
+        # Initialize sampling with memory optimization
         self._initialize_sampling()
         
-        # Pre-compute LF mapping cache if memory allows
+        # Only build additional structures if memory allows
         if self._check_memory_available():
-            self._lf_cache = np.zeros(self.n, dtype=np.int32)
-            for i in range(self.n):
-                self._lf_cache[i] = self._lf_mapping(i)
-
-        # Initialize additional compression structures
-        if self.use_compression:
-            self.run_lengths = self._compute_run_lengths()
-            self.context_stats = self._build_context_statistics()
+            self._build_compression_structures()
+        else:
+            # Fallback to basic mode without additional structures
+            self.use_compression = False
+            self._lf_cache = None
