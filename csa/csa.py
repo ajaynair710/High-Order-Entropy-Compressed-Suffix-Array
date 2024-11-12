@@ -817,43 +817,70 @@ class CompressedSuffixArray:
         return max(0.1, min(entropy, math.log2(len(set(text)))))
 
     def _initialize_sampling(self):
-        """Initialize optimized sampling structures"""
-        # Use bitarray for efficient storage and lookup
-        self.marked_positions = bitarray(self.n)
-        self.marked_positions.setall(0)
-        
-        # Calculate optimal sample rate
-        self.sample_rate = max(1, int(math.log2(self.n) ** self.epsilon))
-        
-        # Sample positions
-        self.sa_samples = {}
-        
-        # Regular sampling
-        for i in range(0, self.n, self.sample_rate):
-            self.sa_samples[i] = self.sa[i]
-            self.marked_positions[i] = 1
-        
-        # Text position sampling
-        for i, sa_val in enumerate(self.sa):
-            if sa_val % self.sample_rate == 0:
-                self.sa_samples[i] = sa_val
-                self.marked_positions[i] = 1
+        """Initialize sampling structures with error handling"""
+        try:
+            # Use bitarray for efficient storage and lookup
+            self.marked_positions = bitarray(self.n)
+            self.marked_positions.setall(0)
+            
+            # Calculate optimal sample rate with bounds
+            log_n = max(1, math.log2(max(2, self.n)))
+            self.sample_rate = max(1, min(
+                self.n // 2,  # Don't sample more than half the positions
+                int(log_n ** max(0.1, min(1.0, self.epsilon)))
+            ))
+            
+            # Sample positions with safety checks
+            self.sa_samples = {}
+            
+            # Regular sampling
+            for i in range(0, self.n, self.sample_rate):
+                if 0 <= i < self.n and i < len(self.sa):
+                    self.sa_samples[i] = self.sa[i]
+                    self.marked_positions[i] = 1
+            
+            # Text position sampling
+            for i, sa_val in enumerate(self.sa):
+                if sa_val % self.sample_rate == 0 and i < self.n:
+                    self.sa_samples[i] = sa_val
+                    self.marked_positions[i] = 1
+
+        except Exception as e:
+            print(f"Error in sampling initialization: {str(e)}")
+            raise
 
     def _build_compression_structures(self):
-        """Build additional compression structures if memory allows"""
-        # Build LF mapping cache in chunks
-        chunk_size = 1000000
-        self._lf_cache = np.zeros(self.n, dtype=np.int32)
-        
-        for i in range(0, self.n, chunk_size):
-            end = min(i + chunk_size, self.n)
-            for j in range(i, end):
-                self._lf_cache[j] = self._lf_mapping(j)
-        
-        # Only build compression structures if needed
-        if self.use_compression:
-            self.run_lengths = self._compute_run_lengths()
-            self.context_stats = self._build_context_statistics()
+        """Build additional compression structures with error handling"""
+        try:
+            # Build LF mapping cache in chunks with bounds checking
+            chunk_size = min(1000000, self.n)
+            self._lf_cache = np.zeros(self.n, dtype=np.int32)
+            
+            for i in range(0, self.n, chunk_size):
+                end = min(i + chunk_size, self.n)
+                for j in range(i, end):
+                    try:
+                        self._lf_cache[j] = self._lf_mapping(j)
+                    except Exception:
+                        self._lf_cache[j] = 0
+            
+            # Only build compression structures if needed
+            if self.use_compression:
+                try:
+                    self.run_lengths = self._compute_run_lengths()
+                except Exception as e:
+                    print(f"Warning: Run length computation failed: {str(e)}")
+                    self.run_lengths = []
+
+                try:
+                    self.context_stats = self._build_context_statistics()
+                except Exception as e:
+                    print(f"Warning: Context statistics computation failed: {str(e)}")
+                    self.context_stats = defaultdict(Counter)
+
+        except Exception as e:
+            print(f"Error in compression structure building: {str(e)}")
+            raise
 
     def _build_adaptive_contexts(self, text, k):
         """Build adaptive contexts for entropy calculation
@@ -939,65 +966,78 @@ class CompressedSuffixArray:
         return window_contexts
 
     def __init__(self, text, epsilon=0.5, k=5):
-        """
-        Initialize High-Entropy Compressed Suffix Array with memory optimization
-        """
-        # Validate input text
-        if not text or not isinstance(text, str):
-            raise ValueError("Invalid input text")
+        """Initialize High-Entropy Compressed Suffix Array with memory optimization"""
+        try:
+            # Validate input text
+            if not text or not isinstance(text, str):
+                raise ValueError("Invalid input text")
 
-        # Verify text ends with $
-        if not text.endswith('$'):
-            text = text + '$'  # Add terminator if missing
+            # Verify text ends with $
+            if not text.endswith('$'):
+                text = text + '$'  # Add terminator if missing
 
-        # Remove any null bytes or invalid characters that might cause issues
-        text = ''.join(c for c in text if ord(c) > 0)
-        
-        # Set basic attributes with minimal memory footprint
-        self.text = text
-        self.n = len(text)
-        self.epsilon = epsilon
-        self.k = max(k, 5)
-        
-        # Calculate basic statistics in chunks to reduce memory usage
-        chunk_size = 1000000  # Process 1MB at a time
-        char_set = set()
-        self.char_freqs = Counter()
-        
-        for i in range(0, len(text), chunk_size):
-            chunk = text[i:min(i+chunk_size, len(text))]
-            char_set.update(chunk)
-            self.char_freqs.update(chunk)
-        
-        self.sigma = len(char_set)
-        del char_set  # Free memory
+            # Remove any null bytes or invalid characters that might cause issues
+            text = ''.join(c for c in text if ord(c) > 0)
+            
+            # Set basic attributes with minimal memory footprint
+            self.text = text
+            self.n = len(text)
+            self.epsilon = max(0.1, min(1.0, epsilon))  # Bound epsilon between 0.1 and 1.0
+            self.k = max(1, k)  # Ensure k is at least 1
+            
+            # Calculate basic statistics in chunks to reduce memory usage
+            chunk_size = 1000000  # Process 1MB at a time
+            char_set = set()
+            self.char_freqs = Counter()
+            
+            for i in range(0, len(text), chunk_size):
+                chunk = text[i:min(i+chunk_size, len(text))]
+                char_set.update(chunk)
+                self.char_freqs.update(chunk)
+            
+            self.sigma = max(2, len(char_set))  # Ensure at least 2 distinct characters
+            del char_set  # Free memory
 
-        # Set compression parameters
-        self.compression_threshold = 100
-        self.use_compression = self.n >= self.compression_threshold
-        self.run_length_threshold = 4
+            # Set compression parameters with safety bounds
+            self.compression_threshold = 100
+            self.use_compression = self.n >= self.compression_threshold
+            self.run_length_threshold = max(2, min(4, int(math.log2(self.n))))
 
-        # Build core structures with memory optimization
-        self.sa = build_suffix_array(self.text)
-        
-        # Build BWT in chunks
-        self.bwt = bwt_transform(self.text if self.use_compression else None, self.sa)
-        
-        # Now we can safely delete text if not needed
-        if not self.use_compression:
-            del self.text
-        
-        # Initialize count table and wavelet tree with memory constraints
-        self.count = build_count(self.bwt)
-        self.wavelet_tree = WaveletTree(self.bwt)
+            # Build core structures with memory optimization and error handling
+            try:
+                self.sa = build_suffix_array(self.text)
+                self.bwt = bwt_transform(self.text if self.use_compression else None, self.sa)
+            except Exception as e:
+                print(f"Error during SA/BWT construction: {str(e)}")
+                raise
 
-        # Initialize sampling with memory optimization
-        self._initialize_sampling()
-        
-        # Only build additional structures if memory allows
-        if self._check_memory_available():
-            self._build_compression_structures()
-        else:
-            # Fallback to basic mode without additional structures
-            self.use_compression = False
-            self._lf_cache = None
+            # Initialize count table and wavelet tree with safety checks
+            try:
+                self.count = build_count(self.bwt)
+                self.wavelet_tree = WaveletTree(self.bwt)
+            except Exception as e:
+                print(f"Error during auxiliary structure construction: {str(e)}")
+                raise
+
+            # Initialize sampling with error handling
+            try:
+                self._initialize_sampling()
+            except Exception as e:
+                print(f"Error during sampling initialization: {str(e)}")
+                raise
+
+            # Only build additional structures if memory allows
+            if self._check_memory_available():
+                try:
+                    self._build_compression_structures()
+                except Exception as e:
+                    print(f"Warning: Could not build compression structures: {str(e)}")
+                    self.use_compression = False
+                    self._lf_cache = None
+            else:
+                self.use_compression = False
+                self._lf_cache = None
+
+        except Exception as e:
+            print(f"Fatal error during CSA initialization: {str(e)}")
+            raise
