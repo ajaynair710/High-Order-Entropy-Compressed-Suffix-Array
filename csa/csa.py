@@ -192,55 +192,85 @@ class CompressedSuffixArray:
 
     def _calculate_optimized_entropy(self, char_counts, context, total_chars, k):
         """Calculate entropy with advanced optimization techniques"""
-        entropy = 0
-        context_size = len(set(char_counts.keys()))
-        
-        # Add safety checks
-        if total_chars <= 0:
-            return 0
-        
-        # Dynamic smoothing based on context characteristics
-        alpha = self._get_adaptive_smoothing(context, total_chars)
-        min_prob = 1e-10  # Increased minimum probability threshold
-        
-        # Calculate character distribution statistics
-        char_distribution = {char: max(min_prob, count/total_chars) 
-                            for char, count in char_counts.items()}
-        avg_prob = 1.0 / max(1, len(char_counts))
-        
-        # Enhanced context weighting with distribution awareness
-        context_weight = self._get_context_weight(context, char_distribution, avg_prob)
-        
-        for char, count in char_counts.items():
+        try:
+            entropy = 0
+            context_size = len(set(char_counts.keys()))
+            
+            # More aggressive safety checks
+            if total_chars <= 0 or not char_counts:
+                return 0
+            
+            # Dynamic smoothing with guaranteed positive values
+            alpha = max(0.1, min(0.5, self._get_adaptive_smoothing(context, total_chars)))
+            min_prob = 1e-8  # Even higher minimum probability threshold
+            
+            # Safer character distribution calculation
+            total = float(total_chars)  # Ensure floating point division
+            char_distribution = {}
+            for char, count in char_counts.items():
+                try:
+                    prob = float(count) / total
+                    char_distribution[char] = max(min_prob, min(1.0, prob))
+                except (ZeroDivisionError, ValueError):
+                    char_distribution[char] = min_prob
+            
+            # Guaranteed positive average probability
+            avg_prob = max(min_prob, 1.0 / max(1, len(char_counts)))
+            
+            # Safe context weight calculation
             try:
-                raw_prob = count / total_chars
+                context_weight = self._get_context_weight(context, char_distribution, avg_prob)
+            except:
+                context_weight = 0.5  # Safe fallback
+            
+            # Process each character with multiple safety checks
+            for char, count in char_counts.items():
+                try:
+                    # Ensure positive raw probability
+                    raw_prob = max(min_prob, float(count) / total)
+                    
+                    # Safe smoothing
+                    if raw_prob < 0.05:
+                        smoothed_prob = max(min_prob, (1 - alpha) * raw_prob + alpha * avg_prob)
+                    elif raw_prob < 0.2:
+                        smoothed_prob = max(min_prob, (1 - alpha/2) * raw_prob + (alpha/2) * avg_prob)
+                    else:
+                        smoothed_prob = raw_prob
+                    
+                    # Safe context adjustments
+                    if context_size > 0:
+                        try:
+                            context_factor = max(0, min(1, self._get_context_factor(context, char, raw_prob)))
+                            final_prob = max(min_prob, context_weight * (
+                                context_factor * smoothed_prob + 
+                                (1-context_factor) * avg_prob
+                            ))
+                        except:
+                            final_prob = smoothed_prob
+                    else:
+                        final_prob = smoothed_prob
+                    
+                    # Guarantee probability bounds
+                    final_prob = max(min_prob, min(1.0 - min_prob, final_prob))
+                    
+                    # Safe logarithm calculation
+                    if min_prob <= final_prob <= 1.0:
+                        log_val = math.log2(final_prob)
+                        if not math.isnan(log_val) and not math.isinf(log_val):
+                            entropy -= final_prob * log_val
                 
-                # Multi-level smoothing based on probability ranges
-                if raw_prob < 0.05:
-                    smoothed_prob = (1 - alpha) * raw_prob + alpha * avg_prob
-                elif raw_prob < 0.2:
-                    smoothed_prob = (1 - alpha/2) * raw_prob + (alpha/2) * avg_prob
-                else:
-                    smoothed_prob = raw_prob
-                    
-                # Apply adaptive context-based adjustments
-                if context_size > 0:
-                    context_factor = self._get_context_factor(context, char, raw_prob)
-                    final_prob = context_weight * (context_factor * smoothed_prob + 
-                                                 (1-context_factor) * avg_prob)
-                else:
-                    final_prob = smoothed_prob
-                    
-                final_prob = max(min_prob, min(0.9999, final_prob))
+                except (ValueError, ZeroDivisionError, math.domain_error):
+                    continue
+            
+            # Final safety check
+            if math.isnan(entropy) or math.isinf(entropy):
+                return 0
                 
-                # Safe log calculation
-                if final_prob > 0:
-                    entropy -= final_prob * math.log2(final_prob)
-                    
-            except (ValueError, ZeroDivisionError):
-                continue
+            return max(0, min(8.0, entropy))  # Cap maximum entropy
         
-        return max(0, entropy)
+        except Exception as e:
+            print(f"Warning: Entropy calculation failed with error: {str(e)}")
+            return 1.0  # Safe default entropy value
 
     def _get_adaptive_smoothing(self, context, total_chars):
         """Calculate adaptive smoothing factor based on context"""
@@ -260,22 +290,34 @@ class CompressedSuffixArray:
         return min(0.5, alpha)
 
     def _get_context_weight(self, context, char_distribution, avg_prob):
-        """Calculate context weight based on distribution characteristics"""
+        """Calculate context weight with comprehensive error handling"""
         try:
-            # Calculate distribution entropy with safety checks
-            dist_entropy = -sum(p * math.log2(max(p, 1e-10)) 
-                              for p in char_distribution.values())
+            # Safe entropy calculation
+            dist_entropy = 0
+            for p in char_distribution.values():
+                if 0 < p <= 1:  # Ensure valid probability
+                    try:
+                        log_val = math.log2(max(p, 1e-10))
+                        if not math.isnan(log_val) and not math.isinf(log_val):
+                            dist_entropy -= p * log_val
+                    except:
+                        continue
             
-            # Normalize by maximum possible entropy
-            max_entropy = -math.log2(avg_prob) if avg_prob > 0 else 1
-            normalized_entropy = dist_entropy / max_entropy if max_entropy > 0 else 1
+            # Safe normalization
+            max_entropy = max(0.1, -math.log2(max(avg_prob, 1e-10)))
+            normalized_entropy = min(1.0, dist_entropy / max_entropy)
             
-            # Adjust weight based on entropy
-            base_weight = min(1.0, math.log2(len(context) + 1) / max(1, self.k))
-            return base_weight * (1 - 0.3 * normalized_entropy)
-            
-        except (ValueError, ZeroDivisionError):
-            return 0.5  # Return default weight on error
+            # Safe weight calculation
+            if self.k > 0:
+                base_weight = min(1.0, math.log2(len(context) + 1) / self.k)
+            else:
+                base_weight = 0.5
+                
+            return max(0.1, min(1.0, base_weight * (1 - 0.3 * normalized_entropy)))
+        
+        except Exception as e:
+            print(f"Warning: Context weight calculation failed with error: {str(e)}")
+            return 0.5  # Safe default weight
 
     def _get_context_factor(self, context, char, prob):
         """Calculate context-specific adjustment factor"""
