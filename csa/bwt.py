@@ -1,6 +1,29 @@
+import numpy as np
+
 def bwt_transform(text, suffix_array):
-    rotations = sorted([text[i:] + text[:i] for i in range(len(text))])
-    return "".join(row[-1] for row in rotations)
+    """
+    Compute the Burrows-Wheeler Transform using a suffix array.
+    For each suffix array position, we need the character that precedes it in the text.
+    """
+    n = len(text)
+    bwt = [''] * n
+    
+    # Add progress tracking for long texts
+    chunk_size = max(1, n // 10)
+    
+    for i in range(n):
+        
+        # Get the character that precedes this suffix
+        pos = suffix_array[i] - 1
+        if pos < 0:
+            pos = n - 1
+        bwt[i] = text[pos]
+        
+        # Verify the transformation
+        if i < 5:  # Only check first few for debugging
+            suffix = text[suffix_array[i]:]
+    
+    return ''.join(bwt)
 
 # def test_bwt_transform():
 #     # Test case 1: banana$
