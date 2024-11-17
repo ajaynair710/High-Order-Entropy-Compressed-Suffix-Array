@@ -27,25 +27,41 @@ class WaveletTree:
         }
 
     def rank(self, char, index):
-        if char not in self.tree:
+        """Count occurrences of char up to index (exclusive)"""
+        if char not in self.alphabet:
+            print(f"Character {char} not in wavelet tree alphabet")
             return 0
-        current_text = self.bwt
-        rank = 0
-        while len(current_text) > 0:
-            bitvector = self.tree.get(current_text, {}).get('bitvector', [])
-            if not bitvector:
-                break
-
-            char_bit = 1 if char in ''.join(self.tree.get(current_text, {}).get('right', '')) else 0
-            rank = sum(bit == char_bit for bit in bitvector[:index + 1])
-            if char_bit == 0:
-                current_text = ''.join(c for i, c in enumerate(current_text) if bitvector[i] == 0)
+        if index <= 0:
+            return 0
+        
+        node = self.tree
+        pos = min(index, len(self.bwt))
+        curr_alphabet = self.alphabet
+                
+        count = 0
+        while isinstance(node, dict):
+            mid = len(curr_alphabet) // 2
+            left_chars = curr_alphabet[:mid]
+            right_chars = curr_alphabet[mid:]
+            is_right = char in right_chars
+            
+            bitvector = node['bitvector'][:pos]
+            ones = bitvector.count(1)
+            zeros = len(bitvector) - ones
+            
+            
+            if is_right:
+                count = ones
+                node = node['right']
+                curr_alphabet = right_chars
+                pos = ones
             else:
-                current_text = ''.join(c for i, c in enumerate(current_text) if bitvector[i] == 1)
-            index = rank - 1
-            if len(current_text) == 1:
-                return index + 1 if current_text[0] == char else 0
-        return rank
+                count = zeros
+                node = node['left']
+                curr_alphabet = left_chars
+                pos = zeros
+        
+        return count
 
     def _build_rrr_vectors(self, node):
         if isinstance(node, list):
