@@ -415,7 +415,7 @@ class CompressedSuffixArray:
             
             # Calculate metrics
             compression_ratio = original_size / max(1, compressed_size)
-            space_saving = 100 * (1 - (compressed_size / original_size))
+            space_saving = (1 - (compressed_size / original_size))
             entropy_efficiency = compressed_size / max(1, theoretical_minimum)
             
             return {
