@@ -8,7 +8,6 @@ def calculate_high_order_entropy(text, k):
     
     n = len(text)
     if k == 0:
-        # Zeroth-order entropy (H_0)
         freq = defaultdict(int)
         for c in text:
             freq[c] += 1
@@ -19,10 +18,8 @@ def calculate_high_order_entropy(text, k):
         return h0
     
     if n <= k:
-        # Text too short for k-th order entropy
         return 0
 
-    # For k > 0, calculate conditional entropy
     contexts = defaultdict(lambda: defaultdict(int))
     for i in range(n - k):
         context = text[i:i + k]
