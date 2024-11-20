@@ -20,15 +20,12 @@ class CompressedSuffixArray:
         self.k = k
         self.sigma = len(set(text))
         
-        # Build basic structures
         self.sa = build_suffix_array(self.text)
         self.bwt = bwt_transform(self.text, self.sa)
         
-        # Build direct access tables for constant-time LF-mapping
         self.char_counts = self._build_char_counts()
         self.lf_table = self._build_lf_table()
         
-        # Sample positions at rate (log n)^ε
         self.sampling_rate = max(1, int((math.log(self.n, 2)) ** self.epsilon))
         self.samples = self._build_samples()
 
@@ -37,26 +34,22 @@ class CompressedSuffixArray:
         counts = {}
         running_counts = defaultdict(int)
         
-        # Store count of each character before each position
         for i, c in enumerate(self.bwt):
             counts[i] = dict(running_counts)
             running_counts[c] += 1
         
-        # Add final position counts
         counts[len(self.bwt)] = dict(running_counts)
             
         return counts
 
     def _build_lf_table(self):
         """Build LF-mapping lookup table"""
-        # Initialize C array
         c_array = {}
         current_count = 0
         for char in sorted(set(self.text)):
             c_array[char] = current_count
             current_count += self.text.count(char)
         
-        # Build LF-mapping table
         lf_table = {}
         for i, c in enumerate(self.bwt):
             rank = self.char_counts[i][c] if c in self.char_counts[i] else 0
@@ -67,7 +60,6 @@ class CompressedSuffixArray:
     def _build_samples(self):
         """Build position samples at rate (log n)^ε"""
         samples = {}
-        # Sample every (log n)^ε position in the suffix array
         for i in range(0, self.n):
             if i % self.sampling_rate == 0 or self.sa[i] % self.sampling_rate == 0:
                 samples[i] = self.sa[i]
@@ -82,21 +74,17 @@ class CompressedSuffixArray:
         current_pos = sa_idx
         steps = 0
         
-        # If we're lucky, this position is sampled
         if current_pos in self.samples:
             return self.samples[current_pos]
         
-        # Store the path we take
         path = []
         
-        # Follow LF-mapping until we find a sampled position
         while steps < self.sampling_rate:
             path.append(current_pos)
             current_pos = self._lf_mapping(current_pos)
             steps += 1
             
             if current_pos in self.samples:
-                # Found a sample! Calculate original position
                 pos = self.samples[current_pos]
                 for _ in range(steps):
                     pos = (pos + 1) % self.n
@@ -120,7 +108,6 @@ class CompressedSuffixArray:
         if left == -1 or right == -1:
             return sorted(positions)
         
-        # Process each position with O((log n)^ε) time per occurrence
         for i in range(left, right + 1):
             pos = self.locate_from_range(i)
             if pos != -1:
@@ -137,14 +124,11 @@ class CompressedSuffixArray:
         right = self.n - 1
         
         for c in reversed(pattern):
-            # Calculate new range using C array and Occ values
             left_count = sum(1 for x in self.bwt[:left] if x == c)
             right_count = sum(1 for x in self.bwt[:right + 1] if x == c)
             
-            # Get C[c] - the starting position for character c
             c_pos = sum(self.text.count(x) for x in sorted(set(self.text)) if x < c)
             
-            # Calculate new boundaries
             left = c_pos + left_count
             right = c_pos + right_count - 1
             
