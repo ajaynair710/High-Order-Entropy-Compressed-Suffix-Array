@@ -21,15 +21,12 @@ class EnhancedFMIndex:
     def find_range(self, query):
         l, r = 0, len(self.bwt) - 1
         for char in reversed(query):
-            # print(f"Processing char={char} with l={l}, r={r}")
-
             new_l = self.rank(char, l) + self.count.get(char, 0)
             new_r = self.rank(char, r + 1) + self.count.get(char, 0) - 1
 
             if new_l > new_r:
                 return -1, -1
 
-            # print(f"Updated range: l={new_l}, r={new_r}")
             l, r = new_l, new_r
 
         return l, r
@@ -40,5 +37,4 @@ class EnhancedFMIndex:
         if index >= len(self.occ[character]):
             index = len(self.occ[character]) - 1
         rank_in_bitvector = self.occ[character][index]
-        # print(f"Rank of {character} up to index {index}: {rank_in_bitvector}")
         return rank_in_bitvector
