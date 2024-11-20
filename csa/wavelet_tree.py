@@ -6,7 +6,6 @@ class WaveletTree:
         self.bwt = bwt
         self.alphabet = sorted(set(bwt))
         self.tree = self.build_tree(bwt, self.alphabet)
-        # Add RRR-compressed bitvectors
         self.rrr_vectors = self._build_rrr_vectors(self.tree)
 
     def build_tree(self, bwt, alphabet):
@@ -27,9 +26,7 @@ class WaveletTree:
         }
 
     def rank(self, char, index):
-        """Count occurrences of char up to index (exclusive)"""
         if char not in self.alphabet:
-            print(f"Character {char} not in wavelet tree alphabet")
             return 0
         if index <= 0:
             return 0
@@ -48,7 +45,6 @@ class WaveletTree:
             bitvector = node['bitvector'][:pos]
             ones = bitvector.count(1)
             zeros = len(bitvector) - ones
-            
             
             if is_right:
                 count = ones
@@ -74,16 +70,10 @@ class WaveletTree:
         }
 
     def size_in_bits(self):
-        """Calculate size in bits using high-order entropy bound"""
         n = len(self.bwt)
         sigma = len(self.alphabet)
-        
-        # Space for wavelet tree structure
-        struct_size = 2 * sigma * math.ceil(math.log2(n))  # Pointers
-        
-        # Space for RRR-compressed bitvectors
+        struct_size = 2 * sigma * math.ceil(math.log2(n))
         bitvector_size = self._calculate_bitvector_size(self.tree)
-        
         return struct_size + bitvector_size
 
     def _calculate_bitvector_size(self, node):
@@ -102,7 +92,6 @@ class RRRBitvector:
         self.block_size = max(1, int(math.log2(len(bitvector)) / 2))
         self.superblock_size = self.block_size * self.block_size
         
-        # Store block counts and class IDs
         self.blocks = []
         self.block_classes = []
         self.superblock_samples = []
@@ -119,7 +108,6 @@ class RRRBitvector:
             count += block_count
 
     def _encode_block(self, block):
-        """Encode block using combinatorial number system"""
         if not block:
             return 0
         n = len(block)
@@ -127,7 +115,6 @@ class RRRBitvector:
         if ones == 0 or ones == n:
             return 0
         
-        # Calculate combinatorial number
         rank = 0
         remaining = ones
         for i, bit in enumerate(block):
@@ -137,7 +124,6 @@ class RRRBitvector:
         return rank
 
     def _binom(self, n, k):
-        """Calculate binomial coefficient"""
         if k < 0 or k > n:
             return 0
         if k == 0 or k == n:
@@ -149,13 +135,9 @@ class RRRBitvector:
         return c
 
     def size_in_bits(self):
-        """Calculate size in bits"""
         n = len(self.blocks) * self.block_size
-        # Space for superblock samples
         superblock_bits = len(self.superblock_samples) * math.ceil(math.log2(n))
-        # Space for block classes
         block_class_bits = len(self.block_classes) * math.ceil(math.log2(self.block_size))
-        # Space for encoded blocks
         block_bits = sum(math.ceil(math.log2(self._binom(self.block_size, c) + 1)) 
                         for c in self.block_classes)
         
