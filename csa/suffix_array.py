@@ -49,7 +49,6 @@ def ksa(T):
     B_1 = range(1, length, 3)
     B_2 = range(2, length, 3)
 
-    # Sort sample suffixes
     R_1 = [Triple(T, idx, length) for idx in B_1]
     R_2 = [Triple(T, idx, length) for idx in B_2]
     R = R_1 + R_2
@@ -59,7 +58,6 @@ def ksa(T):
 
     sorted_suffixes_R = sorted(R, key=lambda x: x.triple)
 
-    # Assign ranks
     rank = 0
     prev_triple = None
     for suffix in sorted_suffixes_R:
@@ -70,27 +68,22 @@ def ksa(T):
 
     R_prime = [suffix.rank for suffix in R]
 
-    # Recursive case
     if rank < len(R):
         R_prime_suffix_array = ksa(R_prime)
         sorted_suffixes_R = [R[i] for i in R_prime_suffix_array[1:]]
     else:
-        # Base case - direct sort
         sorted_suffixes_R = sorted(R, key=lambda x: x.triple)
 
-    # Build rank lookup table
     rank_Si = {}
     for i, suffix in enumerate(sorted_suffixes_R):
         rank_Si[suffix.index] = i + 1
 
-    # Sort non-sample suffixes
     nonsample_pairs = [NonsamplePair(T, idx, rank_Si) for idx in B_0]
     sorted_nonsample_pairs = sorted(nonsample_pairs, key=lambda x: x.pair)
 
-    # Merge step
     result = []
-    i = 0  # Index for sorted sample suffixes
-    j = 0  # Index for sorted non-sample suffixes
+    i = 0
+    j = 0
 
     def compare_suffixes(sample_idx, nonsample_idx):
         if sample_idx % 3 == 1:
@@ -103,7 +96,7 @@ def ksa(T):
                 rank_Si.get(nonsample_idx + 1, 0)
             )
             return sample_tuple <= nonsample_tuple
-        else:  # sample_idx % 3 == 2
+        else:
             sample_tuple = (
                 T[sample_idx] if sample_idx < length else 0,
                 T[sample_idx + 1] if sample_idx + 1 < length else 0,
@@ -127,7 +120,6 @@ def ksa(T):
             result.append(nonsample_suffix.index)
             j += 1
 
-    # Append remaining suffixes
     while i < len(sorted_suffixes_R):
         result.append(sorted_suffixes_R[i].index)
         i += 1
@@ -138,33 +130,17 @@ def ksa(T):
     return result
 
 def build_suffix_array(text):
-    """Build suffix array ensuring all suffixes are included"""
     n = len(text)
-    
-    # Create list of (suffix, index) pairs
-    suffixes = []
-    for i in range(n):
-        suffixes.append((text[i:], i))
-    
-    # Sort suffixes lexicographically
-    suffixes.sort()  # This sorts based on the suffix string
-    
-    # Extract indices to form suffix array
+    suffixes = [(text[i:], i) for i in range(n)]
+    suffixes.sort()
     sa = [index for (_, index) in suffixes]
     
-    # Validate length
     if len(sa) != n:
-        # Debug output
         print(f"Warning: Generated {len(sa)} suffixes for text of length {n}")
-        print("First few missing positions:", set(range(n)) - set(sa))
-        
-        # Ensure all positions are included
         positions = set(range(n))
         missing = positions - set(sa)
         
-        # Add any missing positions
         for pos in missing:
-            # Insert at correct position to maintain lexicographic order
             suffix = text[pos:]
             insert_pos = 0
             while insert_pos < len(sa) and text[sa[insert_pos]:] < suffix:
@@ -172,61 +148,3 @@ def build_suffix_array(text):
             sa.insert(insert_pos, pos)
     
     return sa
-
-# def test_suffix_array():
-#     # Test case 1: Simple string "banana$"
-#     text1 = "banana$"
-#     sa1 = build_suffix_array(text1)
-#     expected_sa1 = [6, 5, 3, 1, 0, 4, 2]  # Correct suffix array for "banana$"
-    
-#     # Test case 2: String with repeating characters "aaa$"
-#     text2 = "aaa$"
-#     sa2 = build_suffix_array(text2)
-#     expected_sa2 = [3, 2, 1, 0]  # Correct suffix array for "aaa$"
-    
-#     # Test case 3: String with all different characters "abcd$"
-#     text3 = "abcd$"
-#     sa3 = build_suffix_array(text3)
-#     expected_sa3 = [4, 0, 1, 2, 3]  # Correct suffix array for "abcd$"
-    
-#     # Verify results
-#     def verify_suffix_array(text, sa):
-#         # Check if length is correct
-#         if len(sa) != len(text):
-#             return False
-            
-#         # Check if all positions are present
-#         if sorted(sa) != list(range(len(text))):
-#             return False
-            
-#         # Check if suffixes are in lexicographical order
-#         suffixes = [(text[pos:], pos) for pos in sa]
-#         return suffixes == sorted(suffixes)
-    
-#     # Print results
-#     print("Test case 1 (banana$):")
-#     print(f"Expected: {expected_sa1}")
-#     print(f"Got:      {sa1}")
-#     print(f"Correct?: {sa1 == expected_sa1}")
-#     print(f"Valid?:   {verify_suffix_array(text1, sa1)}\n")
-    
-#     print("Test case 2 (aaa$):")
-#     print(f"Expected: {expected_sa2}")
-#     print(f"Got:      {sa2}")
-#     print(f"Correct?: {sa2 == expected_sa2}")
-#     print(f"Valid?:   {verify_suffix_array(text2, sa2)}\n")
-    
-#     print("Test case 3 (abcd$):")
-#     print(f"Expected: {expected_sa3}")
-#     print(f"Got:      {sa3}")
-#     print(f"Correct?: {sa3 == expected_sa3}")
-#     print(f"Valid?:   {verify_suffix_array(text3, sa3)}\n")
-    
-#     # Print all suffixes in order for debugging
-#     print("Detailed suffix list for banana$:")
-#     sa = sa1
-#     for i, pos in enumerate(sa):
-#         print(f"SA[{i}] = {pos}: {text1[pos:]}")
-
-# if __name__ == "__main__":
-#     test_suffix_array()
