@@ -68,4 +68,4 @@ class WaveletTree:
         n = len(self.bwt)
         sigma = len(self.alphabet)
         struct_size = 2 * sigma * math.ceil(math.log2(n))
-        return struct_size + len(self.tree['bitvector'])  # Size of the bitvector
+        return struct_size + len(self.tree['bitvector']) 
