@@ -7,14 +7,19 @@ from tests.benchmark import print_benchmark_summary, run_full_benchmark
 def main():
     eps = 0.5
     very_long_text = "thequickbrownfoxjumpsoverthelazydog$"
-    very_long_text = very_long_text * 1000
-    h0 = calculate_high_order_entropy(very_long_text, 0)  # Zeroth-order entropy
-    h5 = calculate_high_order_entropy(very_long_text, 5)  # Fifth-order entropy
+    chunk_size = 1000  # Define a chunk size
+    total_chunks = 10000  # Total number of chunks to process
 
-    print(f"H_0: {h0:.4f}, H_5: {h5:.4f}")
+    for i in range(total_chunks):
+        chunk = very_long_text * chunk_size  # Create a chunk
+        h0 = calculate_high_order_entropy(chunk, 0)  # Zeroth-order entropy
+        h5 = calculate_high_order_entropy(chunk, 5)  # Fifth-order entropy
 
-    test_compression(very_long_text, eps)
-    test_locate(very_long_text, "fox", eps)
+        print(f"Chunk {i + 1}: H_0: {h0:.4f}, H_5: {h5:.4f}")
+
+        test_compression(chunk, eps)
+        test_locate(chunk, "fox", eps)
+
     results = run_full_benchmark(very_long_text)
 
 def test_compression(text, eps):
