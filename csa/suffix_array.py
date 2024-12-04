@@ -130,21 +130,7 @@ def ksa(T):
     return result
 
 def build_suffix_array(text):
+    """suffix array construction"""
     n = len(text)
-    suffixes = [(text[i:], i) for i in range(n)]
-    suffixes.sort()
-    sa = [index for (_, index) in suffixes]
-    
-    if len(sa) != n:
-        print(f"Warning: Generated {len(sa)} suffixes for text of length {n}")
-        positions = set(range(n))
-        missing = positions - set(sa)
-        
-        for pos in missing:
-            suffix = text[pos:]
-            insert_pos = 0
-            while insert_pos < len(sa) and text[sa[insert_pos]:] < suffix:
-                insert_pos += 1
-            sa.insert(insert_pos, pos)
-    
-    return sa
+    suffixes = sorted((text[i:], i) for i in range(n))
+    return [index for (_, index) in suffixes]
