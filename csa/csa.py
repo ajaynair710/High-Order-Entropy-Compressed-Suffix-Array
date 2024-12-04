@@ -2,7 +2,6 @@
 import math
 from csa.suffix_array import build_suffix_array
 from csa.bwt import bwt_transform
-from utils.utils import build_occ, build_count
 from csa.high_order_entropy import calculate_high_order_entropy
 from csa.wavelet_tree import WaveletTree
 from collections import Counter
@@ -58,7 +57,7 @@ class CompressedSuffixArray:
         return lf_table
 
     def _build_samples(self):
-        """Build position samples at rate (log n)^ε"""
+        """Build position samples"""
         samples = {}
         for i in range(0, self.n):
             if i % self.sampling_rate == 0 or self.sa[i] % self.sampling_rate == 0:
@@ -70,7 +69,7 @@ class CompressedSuffixArray:
         return self.lf_table.get(i, -1)
 
     def _get_position_fast(self, sa_idx):
-        """O((log n)^ε) time position lookup"""
+        """position lookup"""
         current_pos = sa_idx
         steps = 0
         
@@ -93,15 +92,15 @@ class CompressedSuffixArray:
         return -1
 
     def find_pattern(self, pattern):
-        """Find pattern range in O(m * log σ) time"""
+        """Find pattern range"""
         return self._find_pattern_range(pattern)
     
     def locate_from_range(self, sa_idx):
-        """Locate single occurrence in O((log n)^ε) time"""
+        """Locate single occurrence"""
         return self._get_position_fast(sa_idx)
     
     def locate(self, pattern):
-        """Full pattern location - O(m * log σ + k * (log n)^ε) time"""
+        """Full pattern location"""
         positions = set()
         left, right = self.find_pattern(pattern)
         
