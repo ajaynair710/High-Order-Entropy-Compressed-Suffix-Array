@@ -11,10 +11,7 @@ def calculate_high_order_entropy(text, k):
         freq = defaultdict(int)
         for c in text:
             freq[c] += 1
-        h0 = 0
-        for count in freq.values():
-            p = count / n
-            h0 -= p * math.log2(p)
+        h0 = -sum((count / n) * math.log2(count / n) for count in freq.values())
         return h0
     
     if n <= k:
@@ -29,10 +26,7 @@ def calculate_high_order_entropy(text, k):
     hk = 0
     for context, context_counts in contexts.items():
         context_total = sum(context_counts.values())
-        context_h0 = 0
-        for count in context_counts.values():
-            p = count / context_total
-            context_h0 -= p * math.log2(p)
+        context_h0 = -sum((count / context_total) * math.log2(count / context_total) for count in context_counts.values())
         hk += (context_total / n) * context_h0
 
     return hk
