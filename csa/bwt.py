@@ -1,4 +1,8 @@
 import numpy as np
+import heapq
+from collections import defaultdict, Counter
+import lzma
+import bz2
 
 def bwt_transform(text, suffix_array):
     """
@@ -16,55 +20,118 @@ def bwt_transform(text, suffix_array):
     
     return ''.join(bwt)
 
-# def test_bwt_transform():
-#     # Test case 1: banana$
-#     text1 = "banana$"
-#     sa1 = [6, 5, 3, 1, 0, 4, 2]
-#     bwt1 = bwt_transform(text1, sa1)
-#     expected_bwt1 = "annb$aa"
-    
-#     # Test case 2: aaa$
-#     text2 = "aaa$"
-#     sa2 = [3, 2, 1, 0]
-#     bwt2 = bwt_transform(text2, sa2)
-#     expected_bwt2 = "aaa$"
-    
-#     # Test case 3: abcd$
-#     text3 = "abcd$"
-#     sa3 = [4, 0, 1, 2, 3]
-#     bwt3 = bwt_transform(text3, sa3)
-#     expected_bwt3 = "d$abc"
-    
-#     # Print results
-#     print("Test case 1 (banana$):")
-#     print(f"Input text: {text1}")
-#     print(f"Suffix Array: {sa1}")
-#     print(f"Expected BWT: {expected_bwt1}")
-#     print(f"Got BWT:      {bwt1}")
-#     print(f"Correct?: {bwt1 == expected_bwt1}\n")
-    
-#     print("Test case 2 (aaa$):")
-#     print(f"Input text: {text2}")
-#     print(f"Suffix Array: {sa2}")
-#     print(f"Expected BWT: {expected_bwt2}")
-#     print(f"Got BWT:      {bwt2}")
-#     print(f"Correct?: {bwt2 == expected_bwt2}\n")
-    
-#     print("Test case 3 (abcd$):")
-#     print(f"Input text: {text3}")
-#     print(f"Suffix Array: {sa3}")
-#     print(f"Expected BWT: {expected_bwt3}")
-#     print(f"Got BWT:      {bwt3}")
-#     print(f"Correct?: {bwt3 == expected_bwt3}\n")
-    
-#     # Show detailed transformation for banana$
-#     print("Detailed BWT transformation for banana$:")
-#     print("Suffix Array Position | Suffix      | Previous char")
-#     print("--------------------- | ----------- | -------------")
-#     for i, pos in enumerate(sa1):
-#         suffix = text1[pos:]
-#         prev_char = text1[(pos - 1) % len(text1)]
-#         print(f"{pos:>20} | {suffix:<11} | {prev_char}")
+def mtf_transform(bwt_result):
+    """
+    Apply Move-to-Front transform to the result of BWT.
+    """
+    # Initialize the list of symbols (assuming ASCII characters)
+    symbols = list(range(256))
+    mtf_result = []
 
+    for char in bwt_result:
+        # Find the index of the character in the symbols list
+        index = symbols.index(ord(char))
+        mtf_result.append(index)
+        
+        # Move the character to the front of the list
+        symbols.pop(index)
+        symbols.insert(0, ord(char))
+    
+    return mtf_result
+
+def rle_encode(mtf_result):
+    """
+    Apply Run-Length Encoding to the MTF result.
+    """
+    if not mtf_result:
+        return []
+
+    rle_result = []
+    current_value = mtf_result[0]
+    count = 1
+
+    for value in mtf_result[1:]:
+        if value == current_value:
+            count += 1
+        else:
+            rle_result.append((current_value, count))
+            current_value = value
+            count = 1
+
+    # Append the last run
+    rle_result.append((current_value, count))
+
+    return rle_result
+
+class HuffmanNode:
+    def __init__(self, symbol, frequency):
+        self.symbol = symbol
+        self.frequency = frequency
+        self.left = None
+        self.right = None
+
+    def __lt__(self, other):
+        return self.frequency < other.frequency
+
+def build_huffman_tree(frequencies):
+    heap = [HuffmanNode(symbol, freq) for symbol, freq in frequencies.items()]
+    heapq.heapify(heap)
+
+    while len(heap) > 1:
+        left = heapq.heappop(heap)
+        right = heapq.heappop(heap)
+        merged = HuffmanNode(None, left.frequency + right.frequency)
+        merged.left = left
+        merged.right = right
+        heapq.heappush(heap, merged)
+
+    return heap[0]
+
+def build_huffman_codes(node, prefix="", codebook={}):
+    if node is not None:
+        if node.symbol is not None:
+            codebook[node.symbol] = prefix
+        build_huffman_codes(node.left, prefix + "0", codebook)
+        build_huffman_codes(node.right, prefix + "1", codebook)
+    return codebook
+
+def huffman_encode(rle_result):
+    # Flatten the RLE result to a list of symbols
+    flat_rle = [symbol for symbol, count in rle_result for _ in range(count)]
+    
+    # Calculate frequencies
+    frequencies = Counter(flat_rle)
+    
+    # Build Huffman Tree
+    huffman_tree = build_huffman_tree(frequencies)
+    
+    # Build Huffman Codes
+    huffman_codes = build_huffman_codes(huffman_tree)
+    
+    # Encode the data
+    encoded_data = ''.join(huffman_codes[symbol] for symbol in flat_rle)
+    
+    return encoded_data, huffman_codes
+
+def compress_with_lzma(data):
+    return lzma.compress(data.encode('utf-8'))
+
+def compress_with_bz2(data):
+    return bz2.compress(data.encode('utf-8'))
+
+# Example usage
 # if __name__ == "__main__":
-#     test_bwt_transform()
+#     text = "banana$"
+#     suffix_array = [6, 5, 3, 1, 0, 4, 2]
+#     bwt_result = bwt_transform(text, suffix_array)
+#     mtf_result = mtf_transform(bwt_result)
+#     rle_result = rle_encode(mtf_result)
+#     encoded_data, huffman_codes = huffman_encode(rle_result)
+    
+#     # Compress the entire structure using LZMA
+#     lzma_compressed_data = compress_with_lzma(encoded_data)
+#     print("LZMA Compressed Data Size:", len(lzma_compressed_data))
+    
+#     # Compress the entire structure using BZip2
+#     bz2_compressed_data = compress_with_bz2(encoded_data)
+#     print("BZip2 Compressed Data Size:", len(bz2_compressed_data))
