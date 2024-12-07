@@ -1,6 +1,9 @@
 # wavelet_tree.py
 import math
 from bitarray import bitarray
+from csa.bwt import bwt_transform, compress_with_lzma, compress_with_bz2
+import lzma
+import bz2
 
 class WaveletTree:
     def __init__(self, bwt):
@@ -68,4 +71,25 @@ class WaveletTree:
         n = len(self.bwt)
         sigma = len(self.alphabet)
         struct_size = 2 * sigma * math.ceil(math.log2(n))
-        return struct_size + len(self.tree['bitvector']) 
+        return struct_size + len(self.tree['bitvector'])
+
+# Example usage
+# if __name__ == "__main__":
+#     text = "banana$"
+#     suffix_array = [6, 5, 3, 1, 0, 4, 2]
+#     bwt_result = bwt_transform(text, suffix_array)
+    
+#     # Compress the BWT result
+#     lzma_compressed_data = compress_with_lzma(bwt_result)
+#     bz2_compressed_data = compress_with_bz2(bwt_result)
+    
+#     # Decompress before using in Wavelet Tree
+#     decompressed_bwt_lzma = lzma.decompress(lzma_compressed_data).decode('utf-8')
+#     decompressed_bwt_bz2 = bz2.decompress(bz2_compressed_data).decode('utf-8')
+    
+#     # Build Wavelet Tree using decompressed data
+#     wavelet_tree_lzma = WaveletTree(decompressed_bwt_lzma)
+#     wavelet_tree_bz2 = WaveletTree(decompressed_bwt_bz2)
+    
+#     print("Wavelet Tree built from LZMA decompressed BWT:", wavelet_tree_lzma.tree)
+#     print("Wavelet Tree built from BZip2 decompressed BWT:", wavelet_tree_bz2.tree)
