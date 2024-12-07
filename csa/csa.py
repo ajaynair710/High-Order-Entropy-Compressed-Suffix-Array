@@ -1,13 +1,15 @@
 # csa.py
 import math
 from csa.suffix_array import build_suffix_array
-from csa.bwt import bwt_transform
+from csa.bwt import bwt_transform, compress_with_lzma, compress_with_bz2
 from csa.high_order_entropy import calculate_high_order_entropy
 from csa.wavelet_tree import WaveletTree
 from collections import Counter
 from collections import defaultdict
 from bitarray import bitarray
 import numpy as np
+import lzma
+import bz2
 
 class CompressedSuffixArray:
     def __init__(self, text, epsilon=0.5, k=2):
@@ -21,6 +23,18 @@ class CompressedSuffixArray:
         
         self.sa = build_suffix_array(self.text)
         self.bwt = bwt_transform(self.text, self.sa)
+        
+        # Compress the BWT
+        self.compressed_bwt_lzma = compress_with_lzma(self.bwt)
+        self.compressed_bwt_bz2 = compress_with_bz2(self.bwt)
+        
+        # Decompress for Wavelet Tree
+        decompressed_bwt_lzma = lzma.decompress(self.compressed_bwt_lzma).decode('utf-8')
+        decompressed_bwt_bz2 = bz2.decompress(self.compressed_bwt_bz2).decode('utf-8')
+        
+        # Use decompressed BWT to build Wavelet Tree
+        self.wavelet_tree_lzma = WaveletTree(decompressed_bwt_lzma)
+        self.wavelet_tree_bz2 = WaveletTree(decompressed_bwt_bz2)
         
         self.char_counts = self._build_char_counts()
         self.lf_table = self._build_lf_table()
@@ -115,7 +129,7 @@ class CompressedSuffixArray:
         return sorted(list(positions))
 
     def _find_pattern_range(self, pattern):
-        """Find pattern range in BWT"""
+        """Find pattern range in BWT using rank/select operations."""
         if not pattern:
             return -1, -1
         
@@ -123,8 +137,8 @@ class CompressedSuffixArray:
         right = self.n - 1
         
         for c in reversed(pattern):
-            left_count = sum(1 for x in self.bwt[:left] if x == c)
-            right_count = sum(1 for x in self.bwt[:right + 1] if x == c)
+            left_count = self.wavelet_tree_lzma.rank(c, left)
+            right_count = self.wavelet_tree_lzma.rank(c, right + 1)
             
             c_pos = sum(self.text.count(x) for x in sorted(set(self.text)) if x < c)
             
@@ -135,6 +149,28 @@ class CompressedSuffixArray:
                 return -1, -1
         
         return left, right
+
+    def locate_single_occurrence(self, pattern):
+        """Locate a single occurrence of the pattern using binary search and rank/select operations."""
+        left, right = self._find_pattern_range(pattern)
+        
+        if left == -1 or right == -1:
+            return -1  # Pattern not found
+        
+        # Perform binary search to find the starting position
+        while left < right:
+            mid = (left + right) // 2
+            suffix = self.text[self.sa[mid]:]
+            if suffix.startswith(pattern):
+                right = mid
+            else:
+                left = mid + 1
+        
+        # Use rank/select operations to find the exact position
+        if self.text[self.sa[left]:].startswith(pattern):
+            return self.sa[left]
+        
+        return -1
 
     def get_size_metrics(self):
         min_sigma = max(2, self.sigma)
