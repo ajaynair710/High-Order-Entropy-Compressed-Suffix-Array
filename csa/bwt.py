@@ -20,46 +20,27 @@ def bwt_transform(text, suffix_array):
     
     return ''.join(bwt)
 
-def mtf_transform(bwt_result):
+def rle_encode(bwt_result):
     """
-    Apply Move-to-Front transform to the result of BWT.
+    Apply Run-Length Encoding to the BWT result.
     """
-    # Initialize the list of symbols (assuming ASCII characters)
-    symbols = list(range(256))
-    mtf_result = []
-
-    for char in bwt_result:
-        # Find the index of the character in the symbols list
-        index = symbols.index(ord(char))
-        mtf_result.append(index)
-        
-        # Move the character to the front of the list
-        symbols.pop(index)
-        symbols.insert(0, ord(char))
-    
-    return mtf_result
-
-def rle_encode(mtf_result):
-    """
-    Apply Run-Length Encoding to the MTF result.
-    """
-    if not mtf_result:
+    if not bwt_result:
         return []
 
     rle_result = []
-    current_value = mtf_result[0]
+    current_char = bwt_result[0]
     count = 1
 
-    for value in mtf_result[1:]:
-        if value == current_value:
+    for char in bwt_result[1:]:
+        if char == current_char:
             count += 1
         else:
-            rle_result.append((current_value, count))
-            current_value = value
+            rle_result.append((current_char, count))
+            current_char = char
             count = 1
 
     # Append the last run
-    rle_result.append((current_value, count))
+    rle_result.append((current_char, count))
 
     return rle_result
 
@@ -120,18 +101,21 @@ def compress_with_bz2(data):
     return bz2.compress(data.encode('utf-8'))
 
 # Example usage
-# if __name__ == "__main__":
-#     text = "banana$"
-#     suffix_array = [6, 5, 3, 1, 0, 4, 2]
-#     bwt_result = bwt_transform(text, suffix_array)
-#     mtf_result = mtf_transform(bwt_result)
-#     rle_result = rle_encode(mtf_result)
-#     encoded_data, huffman_codes = huffman_encode(rle_result)
-    
-#     # Compress the entire structure using LZMA
-#     lzma_compressed_data = compress_with_lzma(encoded_data)
-#     print("LZMA Compressed Data Size:", len(lzma_compressed_data))
-    
-#     # Compress the entire structure using BZip2
-#     bz2_compressed_data = compress_with_bz2(encoded_data)
-#     print("BZip2 Compressed Data Size:", len(bz2_compressed_data))
+if __name__ == "__main__":
+    text = "banana$"
+    suffix_array = [6, 5, 3, 1, 0, 4, 2]
+    bwt_result = bwt_transform(text, suffix_array)
+    rle_result = rle_encode(bwt_result)
+    encoded_data, huffman_codes = huffman_encode(rle_result)
+    original_size = len(text) * 8 
+    compressed_size = len(encoded_data) 
+
+    compression_ratio = original_size / compressed_size if compressed_size > 0 else float('inf')
+
+    print("BWT Result:", bwt_result)
+    print("RLE Result:", rle_result)
+    print("Huffman Encoded Data:", encoded_data)
+    print("Huffman Codes:", huffman_codes)
+    print(f"Original Size: {original_size} bits")
+    print(f"Compressed Size: {compressed_size} bits")
+    print(f"Compression Ratio: {compression_ratio:.2f}")
