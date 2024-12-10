@@ -132,5 +132,5 @@ def ksa(T):
 def build_suffix_array(text):
     """suffix array construction"""
     n = len(text)
-    suffixes = sorted((text[i:], i) for i in range(n))
+    suffixes = sorted(range(n), key=lambda i: text[i:])
     return [index for (_, index) in suffixes]
