@@ -1,3 +1,4 @@
+# suffix_array.py
 class Triple(object):
     def __init__(self, T, idx, length):
         t_i = lambda i: T[i] if i < length else 0
@@ -130,7 +131,6 @@ def ksa(T):
     return result
 
 def build_suffix_array(text):
-    """suffix array construction"""
-    n = len(text)
-    suffixes = sorted(range(n), key=lambda i: text[i:])
-    return [index for (_, index) in suffixes]
+    suffixes = [(text[i:], i) for i in range(len(text))] 
+    suffixes.sort() 
+    return [index for (_, index) in suffixes] 
