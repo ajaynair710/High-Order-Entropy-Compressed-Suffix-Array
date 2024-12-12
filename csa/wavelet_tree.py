@@ -1,6 +1,6 @@
 import numpy as np
-from collections import defaultdict
 import math
+from collections import defaultdict
 
 class SuccinctRankSelect:
     def __init__(self, bitmap):
@@ -8,16 +8,13 @@ class SuccinctRankSelect:
         self.bit_vector = np.array(bitmap, dtype=np.uint8)
         self.rank_support = np.zeros(self.n + 1, dtype=np.uint32)
         
-        # Precompute rank values
         for i in range(1, self.n + 1):
             self.rank_support[i] = self.rank_support[i - 1] + self.bit_vector[i - 1]
 
     def rank(self, i):
-        """Returns the number of 1's in the bit vector up to index i."""
         return self.rank_support[i]
 
     def select(self, k):
-        """Returns the index of the k-th 1 in the bit vector."""
         low, high = 0, self.n
         while low < high:
             mid = (low + high) // 2
@@ -27,45 +24,89 @@ class SuccinctRankSelect:
                 high = mid
         return low
 
+class GolombRiceEncoder:
+    def __init__(self, bitmap):
+        ones_count = sum(bitmap)
+        total_len = len(bitmap)
+        self.m = self.compute_dynamic_m(ones_count, total_len)
+
+    def compute_dynamic_m(self, ones_count, total_len):
+        if ones_count == 0:
+            return 1
+        # Dynamic computation of m based on entropy of the gaps between 1s
+        ratio = ones_count / total_len
+        m = max(1, int(math.log2(1 / ratio)))
+        return m
+
+    def encode(self, bitmap):
+        encoded = []
+        quotient, remainder = 0, 0
+        for bit in bitmap:
+            if bit == 1:
+                quotient += 1
+                remainder = quotient
+            else:
+                if quotient > 0:
+                    encoded.extend(self._encode_golomb(quotient))
+                quotient = 0
+        if quotient > 0:
+            encoded.extend(self._encode_golomb(quotient))
+        return encoded
+
+    def _encode_golomb(self, value):
+        quotient = value // self.m
+        remainder = value % self.m
+        encoded_value = [0] * quotient + [1]
+        encoded_value.extend(self._int_to_binary(remainder, self.m))
+        return encoded_value
+
+    def _int_to_binary(self, n, bits):
+        return [int(b) for b in bin(n)[2:].zfill(bits)]
+
 class WaveletTree:
     def __init__(self, text):
         self.text = text
-        self.alphabet = sorted(set(text))  # Unique characters in the text
+        self.alphabet = sorted(set(text))
+        self.m = None
         self.build_tree()
 
     def build_tree(self):
         current_text = self.text
-        self.tree = []  # Stores the compressed bitmaps at each level
-        self.rank_structures = []  # List of Rank/Select structures
+        self.tree = []
+        self.rank_structures = []
 
         while len(self.alphabet) > 1:
             mid = len(self.alphabet) // 2
             left_alphabet = self.alphabet[:mid]
             right_alphabet = self.alphabet[mid:]
 
-            # Generate the bitmap for the partitioning
             bitmap = [1 if c in right_alphabet else 0 for c in current_text]
 
-            # Use Level-Ordered Encoding (LOE) and Range Encoding
-            level_ordered_encoded = self.level_ordered_encode(bitmap)
-            range_encoded_bitmap = self.range_encode(level_ordered_encoded)
+            # Apply Run-Length Encoding (RLE)
+            rle_encoded_bitmap = self.run_length_encode(bitmap)
 
-            # Create the new string for the next level of the tree
+            # Use Golomb-Rice encoding
+            golomb_rice_encoder = GolombRiceEncoder(rle_encoded_bitmap)
+            compressed_bitmap = golomb_rice_encoder.encode(rle_encoded_bitmap)
+
+            # Store the value of m for later use
+            if self.m is None:
+                self.m = golomb_rice_encoder.m
+
             next_text = [c for c in current_text if c in left_alphabet]
 
-            # Store the compressed bitmap and new partitioned alphabet
-            self.tree.append((range_encoded_bitmap, left_alphabet, right_alphabet, next_text))
+            self.tree.append((compressed_bitmap, left_alphabet, right_alphabet, next_text))
 
-            # Build Succinct Rank/Select structure for the bitmap
             rank_select_structure = SuccinctRankSelect(bitmap)
             self.rank_structures.append(rank_select_structure)
 
-            # Move to the left partition for the next level
             self.alphabet = left_alphabet
             current_text = next_text
 
-    def level_ordered_encode(self, bitmap):
-        """Level-Ordered Encoding (LOE): Groups consecutive runs of 0s and 1s in blocks."""
+    def run_length_encode(self, bitmap):
+        """
+        Apply Run-Length Encoding (RLE) to the bitmap.
+        """
         encoded = []
         current_bit = bitmap[0]
         count = 0
@@ -76,49 +117,49 @@ class WaveletTree:
                 encoded.append((current_bit, count))
                 current_bit = bit
                 count = 1
-        encoded.append((current_bit, count))  # Append last block
-        return encoded
+        encoded.append((current_bit, count))  # Append the last run
+        # Convert the RLE list back into a bitmap (expanded form)
+        rle_expanded = []
+        for bit, length in encoded:
+            rle_expanded.extend([bit] * length)
+        return rle_expanded
 
-    def range_encode(self, level_ordered_encoded):
-        """Range encoding: Compresses the sequence of run lengths using variable-length encoding."""
+    def level_ordered_encode(self, bitmap):
+        """
+        Apply Level-Ordered Encoding to the bitmap.
+        """
         encoded = []
-        for bit_value, count in level_ordered_encoded:
-            # Use a simple range encoding approach (you could replace this with an actual range encoding library)
-            # Assign each bit value (0 or 1) a range proportional to its frequency
-            # For simplicity, here we're just storing the run lengths, but you can refine this with real range encoding
-            encoded.extend([bit_value] * count)
+        current_bit = bitmap[0]
+        count = 0
+        for bit in bitmap:
+            if bit == current_bit:
+                count += 1
+            else:
+                encoded.append((current_bit, count))
+                current_bit = bit
+                count = 1
+        encoded.append((current_bit, count))
         return encoded
-
-    def range_decode(self, encoded_bitmap):
-        """Decodes the range-encoded bitmap back to the original bitmap."""
-        return encoded_bitmap  # In this simplified example, we just return the encoded bitmap directly
 
     def rank(self, c, i):
-        """Rank operation: Returns the number of occurrences of character `c` up to index `i`."""
         rank_result = 0
         for level, (compressed_bitmap, left_alphabet, right_alphabet, next_text) in enumerate(self.tree):
             if c in left_alphabet:
-                # Rank in left partition (0 in the bitmap)
-                rank_result = self.rank_structures[level].rank(i + 1)  # Rank in left partition
+                rank_result = self.rank_structures[level].rank(i + 1)
             else:
-                # Rank in right partition (1 in the bitmap)
-                rank_result = self.rank_structures[level].rank(i + 1)  # Rank in right partition
+                rank_result = self.rank_structures[level].rank(i + 1)
         return rank_result
 
     def select(self, c, k):
-        """Select operation: Finds the k-th occurrence of character `c` in the compressed text."""
         select_result = 0
         for level, (compressed_bitmap, left_alphabet, right_alphabet, next_text) in enumerate(self.tree):
             if c in left_alphabet:
-                # Select in left partition (0 in the bitmap)
                 select_result = self.rank_structures[level].select(k)
             else:
-                # Select in right partition (1 in the bitmap)
                 select_result = self.rank_structures[level].select(k)
         return select_result
 
     def compress(self):
-        """Compress the wavelet tree."""
         compressed = []
         for level in self.tree:
             compressed_bitmap, left_alphabet, right_alphabet, next_text = level
@@ -126,44 +167,54 @@ class WaveletTree:
         return compressed
 
     def decompress(self, compressed):
-        """Decompress the wavelet tree back to the original text."""
-        current_text = [''] * len(self.text)  # Create an empty list to hold the decompressed text
+        current_text = [''] * len(self.text)
         for level, (compressed_bitmap, left_alphabet, right_alphabet, next_text) in reversed(list(enumerate(self.tree))):
-            decoded_bitmap = self.range_decode(compressed_bitmap)  # Decode the range-encoded bitmap
+            decoded_bitmap = self._decode_golomb_rice(compressed_bitmap)
             current_text = self._decompress_level(decoded_bitmap, left_alphabet, right_alphabet, current_text)
         return ''.join(current_text)
 
+    def _decode_golomb_rice(self, compressed_bitmap):
+        decoded = []
+        i = 0
+        while i < len(compressed_bitmap):
+            quotient = 0
+            while i < len(compressed_bitmap) and compressed_bitmap[i] == 0:
+                quotient += 1
+                i += 1
+            if i + self.m <= len(compressed_bitmap):
+                remainder = int(''.join(map(str, compressed_bitmap[i:i + self.m])), 2)
+                i += self.m
+                decoded.append(quotient * self.m + remainder)
+            else:
+                break
+        return decoded
+
     def _decompress_level(self, bitmap, left_alphabet, right_alphabet, current_text):
-        """Reconstruct the character sequence at this level from the encoded bitmap."""
-        # Count occurrences of 0s and 1s in the bitmap
         left_count = bitmap.count(0)
         right_count = bitmap.count(1)
 
-        # Allocate the correct number of spaces for left and right partitions
         left_partition = [''] * left_count
         right_partition = [''] * right_count
 
-        # Fill partitions based on bitmap
         left_index = 0
         right_index = 0
         for i, b in enumerate(bitmap):
             if b == 0:
-                if left_index < left_count:  # Check for index bounds
-                    left_partition[left_index] = current_text[i] if i < len(current_text) else ''  # Ensure i is within bounds
+                if left_index < left_count:
+                    left_partition[left_index] = current_text[i] if i < len(current_text) else ''
                     left_index += 1
             else:
-                if right_index < right_count:  # Check for index bounds
-                    right_partition[right_index] = current_text[i] if i < len(current_text) else ''  # Ensure i is within bounds
+                if right_index < right_count:
+                    right_partition[right_index] = current_text[i] if i < len(current_text) else ''
                     right_index += 1
 
-        # Ensure that left and right partition sizes are correct
-        if left_index != left_count or right_index != right_count:
-            print(f"Debug: Final Left index: {left_index}, Right index: {right_index}")
-            raise ValueError(f"Mismatch in partition sizes during decompression. Left index: {left_index}, Right index: {right_index}")
-        
-        # Merge partitions and return the combined result
         return left_partition + right_partition
 
 # Example Usage:
 text = "this is an example text"
 wavelet_tree = WaveletTree(text)
+compressed_tree = wavelet_tree.compress()
+decompressed_text = wavelet_tree.decompress(compressed_tree)
+
+print(f"Original Text: {text}")
+print(f"Decompressed Text: {decompressed_text}")
