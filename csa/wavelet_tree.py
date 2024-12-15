@@ -33,7 +33,6 @@ class GolombRiceEncoder:
     def compute_dynamic_m(self, ones_count, total_len):
         if ones_count == 0:
             return 1
-        # Dynamic computation of m based on entropy of the gaps between 1s
         ratio = ones_count / total_len
         m = max(1, int(math.log2(1 / ratio)))
         return m
@@ -82,14 +81,11 @@ class WaveletTree:
 
             bitmap = [1 if c in right_alphabet else 0 for c in current_text]
 
-            # Apply Run-Length Encoding (RLE)
             rle_encoded_bitmap = self.run_length_encode(bitmap)
 
-            # Use Golomb-Rice encoding
             golomb_rice_encoder = GolombRiceEncoder(rle_encoded_bitmap)
             compressed_bitmap = golomb_rice_encoder.encode(rle_encoded_bitmap)
 
-            # Store the value of m for later use
             if self.m is None:
                 self.m = golomb_rice_encoder.m
 
@@ -104,9 +100,6 @@ class WaveletTree:
             current_text = next_text
 
     def run_length_encode(self, bitmap):
-        """
-        Apply Run-Length Encoding (RLE) to the bitmap.
-        """
         encoded = []
         current_bit = bitmap[0]
         count = 0
@@ -117,17 +110,13 @@ class WaveletTree:
                 encoded.append((current_bit, count))
                 current_bit = bit
                 count = 1
-        encoded.append((current_bit, count))  # Append the last run
-        # Convert the RLE list back into a bitmap (expanded form)
+        encoded.append((current_bit, count))
         rle_expanded = []
         for bit, length in encoded:
             rle_expanded.extend([bit] * length)
         return rle_expanded
 
     def level_ordered_encode(self, bitmap):
-        """
-        Apply Level-Ordered Encoding to the bitmap.
-        """
         encoded = []
         current_bit = bitmap[0]
         count = 0
@@ -210,7 +199,6 @@ class WaveletTree:
 
         return left_partition + right_partition
 
-# Example Usage:
 text = "this is an example text"
 wavelet_tree = WaveletTree(text)
 compressed_tree = wavelet_tree.compress()
