@@ -1,11 +1,6 @@
-# bwt.py
 import numpy as np
 
 def bwt_transform(text, suffix_array):
-    """
-    Compute the Burrows-Wheeler Transform using a suffix array.
-    For each suffix array position, we need the character that precedes it in the text.
-    """
     n = len(text)
     bwt = [''] * n
     
